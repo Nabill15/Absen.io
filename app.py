@@ -68,7 +68,7 @@ if os.getenv("TRUST_PROXY", "1" if IS_PRODUCTION else "0") == "1":
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+) 
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "database.db"))).expanduser().resolve()
 PRIVATE_UPLOAD_ROOT = Path(

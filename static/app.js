@@ -1,4 +1,4 @@
-// Face ID Attendance System - Client JS Application (Flask Integrated version)
+// Absen.io Attendance System - Client JS Application (Flask Integrated version)
 
 // Application State
 const state = {
