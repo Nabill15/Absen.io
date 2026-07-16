@@ -1,4 +1,4 @@
-# FaceID Workforce — UI Redesign v2.0
+# Absen.io Workforce — UI Redesign v2.0
 
 Antarmuka project telah diperbarui menjadi desain enterprise SaaS tanpa mengubah struktur utama aplikasi atau endpoint backend.
 
