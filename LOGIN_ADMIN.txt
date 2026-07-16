@@ -1,0 +1,23 @@
+LOGIN ADMIN - FACE ABSENSI
+===========================
+
+Password awal:
+AdminFace2026!
+
+Cara menjalankan lokal:
+1. Buka terminal di folder project.
+2. Jalankan: pip install -r requirements.txt
+3. Jalankan: python app.py
+4. Buka: http://127.0.0.1:8085
+5. Klik menu Daftar Wajah, Riwayat, atau Admin Panel.
+6. Masukkan password awal di atas.
+
+Mengganti password:
+- Windows: klik dua kali reset_admin_password.bat
+- Semua OS: jalankan python reset_admin_password.py
+- Restart aplikasi setelah mengganti password.
+
+PENTING:
+Ganti password awal sebelum aplikasi dipublikasikan. Jangan mengunggah
+file .env ke repository publik. Untuk deployment, masukkan nilai environment
+sesuai .env.production.example pada dashboard hosting.

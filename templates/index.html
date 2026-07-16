@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f7f8fa">
+    <meta name="description" content="Sistem presensi biometrik berbasis pengenalan wajah untuk operasional perusahaan.">
+    <title>FaceID Workforce — Sistem Presensi Biometrik</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Lewati ke konten utama</a>
+
+    <div class="system-loader" id="system-loader" role="status" aria-live="polite">
+        <div class="loader-card">
+            <div class="loader-brand">
+                <div class="brand-mark brand-mark-lg" aria-hidden="true">
+                    <span class="material-icons-round">face_retouching_natural</span>
+                </div>
+                <div>
+                    <span class="eyebrow">FaceID Workforce</span>
+                    <h1>Menyiapkan sistem biometrik</h1>
+                </div>
+            </div>
+            <p class="loader-copy">Model pengenalan wajah sedang dimuat secara aman di perangkat ini.</p>
+
+            <div class="loader-progress-bar" aria-label="Progres inisialisasi">
+                <div class="loader-progress" id="loader-progress"></div>
+            </div>
+
+            <div class="loader-status-list">
+                <div class="status-step active" id="step-core">
+                    <span class="material-icons-round">sync</span>
+                    <span>Memuat pustaka AI</span>
+                </div>
+                <div class="status-step" id="step-detector">
+                    <span class="material-icons-round">pending</span>
+                    <span>Menyiapkan deteksi wajah</span>
+                </div>
+                <div class="status-step" id="step-landmarks">
+                    <span class="material-icons-round">pending</span>
+                    <span>Menyiapkan landmark wajah</span>
+                </div>
+                <div class="status-step" id="step-recognition">
+                    <span class="material-icons-round">pending</span>
+                    <span>Menyiapkan pengenalan identitas</span>
+                </div>
+            </div>
+
+            <button class="btn btn-secondary btn-block loader-skip" id="btn-skip-loader" type="button">
+                Lanjutkan tanpa pemindaian AI
+            </button>
+        </div>
+    </div>
+
+    <div class="mobile-overlay" id="mobile-overlay" aria-hidden="true"></div>
+
+    <div class="app-shell">
+        <aside class="sidebar" id="sidebar" aria-label="Navigasi utama">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <div class="brand-mark" aria-hidden="true">
+                        <span class="material-icons-round">face_retouching_natural</span>
+                    </div>
+                    <div class="brand-copy">
+                        <strong>FaceID</strong>
+                        <span>Workforce</span>
+                    </div>
+                </div>
+                <button class="icon-btn sidebar-close" id="sidebar-close" type="button" aria-label="Tutup navigasi">
+                    <span class="material-icons-round">close</span>
+                </button>
+            </div>
+
+            <div class="workspace-card">
+                <div class="workspace-icon">
+                    <span class="material-icons-round">apartment</span>
+                </div>
+                <div>
+                    <span>Workspace</span>
+                    <strong>Attendance Center</strong>
+                </div>
+                <span class="material-icons-round workspace-chevron">unfold_more</span>
+            </div>
+
+            <nav class="sidebar-nav">
+                <span class="nav-label">Operasional</span>
+                <button class="nav-item active" data-tab="dashboard" type="button">
+                    <span class="material-icons-round">space_dashboard</span>
+                    <span>Dashboard</span>
+                </button>
+                <button class="nav-item" data-tab="scan" type="button">
+                    <span class="material-icons-round">center_focus_strong</span>
+                    <span>Scan Presensi</span>
+                    <span class="nav-chip">Live</span>
+                </button>
+
+                <span class="nav-label nav-label-spaced">Administrasi</span>
+                <button class="nav-item" data-tab="register" type="button">
+                    <span class="material-icons-round">person_add_alt</span>
+                    <span>Registrasi Wajah</span>
+                    <span class="nav-lock material-icons-round" aria-hidden="true">lock</span>
+                </button>
+                <button class="nav-item" data-tab="logs" type="button">
+                    <span class="material-icons-round">receipt_long</span>
+                    <span>Riwayat</span>
+                    <span class="nav-lock material-icons-round" aria-hidden="true">lock</span>
+                </button>
+                <button class="nav-item" id="nav-admin" data-tab="admin" type="button">
+                    <span class="material-icons-round">admin_panel_settings</span>
+                    <span>Admin Panel</span>
+                    <span class="nav-lock material-icons-round" aria-hidden="true">lock</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="system-health">
+                    <div class="system-health-head">
+                        <span class="status-dot online"></span>
+                        <strong>Status sistem</strong>
+                    </div>
+                    <span class="system-status">Sistem siap digunakan</span>
+                </div>
+                <div class="sidebar-version">FaceID Workforce v2.0</div>
+            </div>
+        </aside>
+
+        <main class="main-content" id="main-content">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="icon-btn mobile-menu" id="mobile-menu" type="button" aria-label="Buka navigasi">
+                        <span class="material-icons-round">menu</span>
+                    </button>
+                    <div class="header-title">
+                        <div class="breadcrumb"><span>FaceID Workforce</span><span>/</span><span id="breadcrumb-current">Dashboard</span></div>
+                        <h1 id="page-title">Dashboard Presensi</h1>
+                        <p id="page-subtitle">Pantau aktivitas kehadiran dan kondisi sistem hari ini.</p>
+                    </div>
+                </div>
+
+                <div class="header-actions">
+                    <div class="clock-card" aria-label="Waktu saat ini">
+                        <span class="material-icons-round">schedule</span>
+                        <div>
+                            <strong id="live-clock">00:00:00</strong>
+                            <span>Waktu lokal</span>
+                        </div>
+                    </div>
+                    <button class="icon-btn" id="theme-toggle" type="button" aria-label="Ubah tema">
+                        <span class="material-icons-round">dark_mode</span>
+                    </button>
+                    <button class="session-button" id="admin-session-button" type="button" aria-label="Login admin">
+                        <span class="session-avatar"><span class="material-icons-round">person</span></span>
+                        <span class="session-copy">
+                            <strong id="admin-session-label">Operator</strong>
+                            <small id="admin-session-state">Login admin</small>
+                        </span>
+                        <span class="material-icons-round session-chevron">expand_more</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="content-area">
+                <section id="dashboard" class="tab-content active" aria-labelledby="page-title">
+                    <div class="welcome-banner">
+                        <div class="welcome-copy">
+                            <span class="eyebrow eyebrow-light">Workforce overview</span>
+                            <h2>Kelola kehadiran dengan cepat dan akurat.</h2>
+                            <p>Verifikasi wajah, pantau aktivitas, dan kelola data karyawan dalam satu sistem terintegrasi.</p>
+                            <div class="welcome-actions">
+                                <button class="btn btn-inverse" id="btn-quick-scan" type="button">
+                                    <span class="material-icons-round">center_focus_strong</span>
+                                    Mulai scan presensi
+                                </button>
+                                <button class="btn btn-ghost-light" id="btn-quick-register" type="button">
+                                    <span class="material-icons-round">person_add_alt</span>
+                                    Registrasi karyawan
+                                </button>
+                            </div>
+                        </div>
+                        <div class="welcome-visual" aria-hidden="true">
+                            <div class="visual-orbit orbit-one"></div>
+                            <div class="visual-orbit orbit-two"></div>
+                            <div class="visual-face"><span class="material-icons-round">face_retouching_natural</span></div>
+                            <div class="visual-chip chip-top"><span class="material-icons-round">verified</span> AI aktif</div>
+                            <div class="visual-chip chip-bottom"><span class="material-icons-round">shield</span> Data aman</div>
+                        </div>
+                    </div>
+
+                    <div class="section-heading">
+                        <div>
+                            <span class="eyebrow">Ringkasan hari ini</span>
+                            <h2>Metrik kehadiran</h2>
+                        </div>
+                        <div class="date-pill" id="today-label">
+                            <span class="material-icons-round">calendar_today</span>
+                            <span>Hari ini</span>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <article class="stat-card">
+                            <div class="stat-card-head">
+                                <div class="stat-icon-wrapper checkin"><span class="material-icons-round">login</span></div>
+                                <span class="trend-badge neutral">Hari ini</span>
+                            </div>
+                            <div class="stat-info">
+                                <p class="stat-number" id="stat-checkin">0</p>
+                                <h3>Check-in</h3>
+                                <span class="stat-label">Karyawan telah masuk</span>
+                            </div>
+                        </article>
+
+                        <article class="stat-card">
+                            <div class="stat-card-head">
+                                <div class="stat-icon-wrapper checkout"><span class="material-icons-round">logout</span></div>
+                                <span class="trend-badge neutral">Hari ini</span>
+                            </div>
+                            <div class="stat-info">
+                                <p class="stat-number" id="stat-checkout">0</p>
+                                <h3>Check-out</h3>
+                                <span class="stat-label">Karyawan telah pulang</span>
+                            </div>
+                        </article>
+
+                        <article class="stat-card">
+                            <div class="stat-card-head">
+                                <div class="stat-icon-wrapper active-users"><span class="material-icons-round">groups</span></div>
+                                <span class="trend-badge success"><span class="material-icons-round">verified</span> Aktif</span>
+                            </div>
+                            <div class="stat-info">
+                                <p class="stat-number" id="stat-users">0</p>
+                                <h3>Karyawan terdaftar</h3>
+                                <span class="stat-label">Profil biometrik aktif</span>
+                            </div>
+                        </article>
+
+                        <article class="stat-card">
+                            <div class="stat-card-head">
+                                <div class="stat-icon-wrapper accuracy"><span class="material-icons-round">fingerprint</span></div>
+                                <span class="trend-badge info">Biometrik</span>
+                            </div>
+                            <div class="stat-info">
+                                <p class="stat-number">128<span class="stat-unit">D</span></p>
+                                <h3>Face descriptor</h3>
+                                <span class="stat-label">Vektor pengenalan wajah</span>
+                            </div>
+                        </article>
+                    </div>
+
+                    <div class="dashboard-grid">
+                        <section class="panel activity-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <span class="eyebrow">Aktivitas</span>
+                                    <h2>Presensi terbaru</h2>
+                                </div>
+                                <button class="btn btn-tertiary btn-sm" id="btn-view-all-logs" type="button">
+                                    Lihat semua
+                                    <span class="material-icons-round">arrow_forward</span>
+                                </button>
+                            </div>
+                            <div class="activity-list" id="recent-activity-list">
+                                <div class="empty-state">
+                                    <span class="empty-icon material-icons-round">event_available</span>
+                                    <h3>Belum ada aktivitas</h3>
+                                    <p>Aktivitas presensi hari ini akan tampil di sini.</p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <aside class="panel operations-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <span class="eyebrow">Operasional</span>
+                                    <h2>Akses cepat</h2>
+                                </div>
+                            </div>
+                            <div class="operations-list">
+                                <button class="operation-item" type="button" data-go-tab="scan">
+                                    <span class="operation-icon operation-primary material-icons-round">center_focus_strong</span>
+                                    <span class="operation-copy"><strong>Scan presensi</strong><small>Verifikasi check-in atau check-out</small></span>
+                                    <span class="material-icons-round operation-arrow">chevron_right</span>
+                                </button>
+                                <button class="operation-item" type="button" data-go-tab="register">
+                                    <span class="operation-icon operation-violet material-icons-round">person_add_alt</span>
+                                    <span class="operation-copy"><strong>Registrasi wajah</strong><small>Tambahkan profil karyawan baru</small></span>
+                                    <span class="material-icons-round operation-arrow">chevron_right</span>
+                                </button>
+                                <button class="operation-item" type="button" data-go-tab="logs">
+                                    <span class="operation-icon operation-green material-icons-round">download</span>
+                                    <span class="operation-copy"><strong>Ekspor laporan</strong><small>Unduh data presensi dalam CSV</small></span>
+                                    <span class="material-icons-round operation-arrow">chevron_right</span>
+                                </button>
+                            </div>
+                            <div class="security-note">
+                                <span class="material-icons-round">shield</span>
+                                <div><strong>Area terproteksi</strong><p>Data wajah dan riwayat hanya dapat diakses oleh admin.</p></div>
+                            </div>
+                        </aside>
+                    </div>
+                </section>
+
+                <section id="register" class="tab-content" aria-labelledby="page-title">
+                    <div class="workflow-header">
+                        <div class="workflow-intro">
+                            <span class="eyebrow">Enrollment workflow</span>
+                            <h2>Registrasi biometrik karyawan</h2>
+                            <p>Lengkapi identitas, aktifkan kamera, lalu rekam beberapa sudut wajah untuk meningkatkan akurasi.</p>
+                        </div>
+                        <ol class="stepper" aria-label="Tahapan registrasi">
+                            <li class="active"><span>1</span><div><strong>Identitas</strong><small>Data karyawan</small></div></li>
+                            <li><span>2</span><div><strong>Pemindaian</strong><small>Rekam wajah</small></div></li>
+                            <li><span>3</span><div><strong>Verifikasi</strong><small>Simpan profil</small></div></li>
+                        </ol>
+                    </div>
+
+                    <div class="registration-layout">
+                        <section class="panel form-panel">
+                            <div class="panel-header panel-header-border">
+                                <div>
+                                    <span class="eyebrow">Langkah 1</span>
+                                    <h2>Informasi karyawan</h2>
+                                </div>
+                                <span class="required-note"><span>*</span> Wajib diisi</span>
+                            </div>
+
+                            <form id="register-form" onsubmit="event.preventDefault();">
+                                <div class="form-group">
+                                    <label for="employee-id">ID karyawan <span>*</span></label>
+                                    <div class="input-with-icon">
+                                        <span class="material-icons-round">badge</span>
+                                        <input type="text" id="employee-id" placeholder="Contoh: EMP-2026-001" required autocomplete="off">
+                                    </div>
+                                    <small>Gunakan ID unik dari sistem HR perusahaan.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="employee-name">Nama lengkap <span>*</span></label>
+                                    <div class="input-with-icon">
+                                        <span class="material-icons-round">person</span>
+                                        <input type="text" id="employee-name" placeholder="Contoh: Alex Rivera" required autocomplete="off">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="employee-role">Jabatan atau divisi <span>*</span></label>
+                                    <div class="input-with-icon">
+                                        <span class="material-icons-round">work_outline</span>
+                                        <input type="text" id="employee-role" placeholder="Contoh: Product Designer" required autocomplete="off">
+                                    </div>
+                                </div>
+
+                                <div class="instruction-box">
+                                    <span class="material-icons-round">lightbulb</span>
+                                    <div>
+                                        <h4>Persiapan pemindaian</h4>
+                                        <p>Gunakan pencahayaan merata, lepaskan masker atau kacamata hitam, dan pastikan hanya satu wajah terlihat.</p>
+                                    </div>
+                                </div>
+
+                                <button type="button" class="btn btn-primary btn-block" id="btn-start-register-camera">
+                                    <span class="material-icons-round">videocam</span>
+                                    Hubungkan kamera
+                                </button>
+                            </form>
+                        </section>
+
+                        <section class="panel camera-panel">
+                            <div class="panel-header panel-header-border">
+                                <div>
+                                    <span class="eyebrow">Langkah 2</span>
+                                    <h2>Pemindaian wajah</h2>
+                                </div>
+                                <span class="camera-state"><span class="status-dot"></span> Kamera</span>
+                            </div>
+
+                            <div class="scanner-container">
+                                <div class="webcam-viewport" aria-label="Area kamera registrasi">
+                                    <video id="register-video" autoplay playsinline muted></video>
+                                    <canvas id="register-canvas"></canvas>
+                                    <div class="camera-placeholder">
+                                        <span class="material-icons-round">videocam_off</span>
+                                        <strong>Kamera belum aktif</strong>
+                                        <span>Hubungkan kamera untuk memulai pemindaian.</span>
+                                    </div>
+                                    <div class="scanner-hud">
+                                        <div class="hud-frame circular" id="register-hud-frame"></div>
+                                        <svg class="progress-ring" width="240" height="240" viewBox="0 0 240 240" id="register-progress-ring" aria-hidden="true">
+                                            <circle class="progress-ring__circle" stroke-width="7" fill="transparent" r="110" cx="120" cy="120"></circle>
+                                        </svg>
+                                        <div class="laser-line circle-scan" id="register-laser"></div>
+                                        <div class="hud-status" id="register-hud-status">Kamera belum terhubung</div>
+                                    </div>
+                                </div>
+                                <div class="scanner-controls">
+                                    <button class="btn btn-success disabled" id="btn-capture-face" disabled type="button">
+                                        <span class="material-icons-round">face_retouching_natural</span>
+                                        Pindai dan daftarkan
+                                    </button>
+                                    <div id="register-progress-text" class="register-progress-text">Menyelaraskan wajah... 0%</div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </section>
+
+                <section id="scan" class="tab-content" aria-labelledby="page-title">
+                    <div class="scan-topline">
+                        <div>
+                            <span class="eyebrow">Live verification</span>
+                            <h2>Terminal presensi wajah</h2>
+                            <p>Pilih jenis presensi dan posisikan wajah di tengah kamera.</p>
+                        </div>
+                        <div class="live-status"><span class="status-dot online"></span><span>Terminal online</span></div>
+                    </div>
+
+                    <div class="scan-layout">
+                        <section class="panel scanner-panel-main">
+                            <div class="scan-toolbar">
+                                <div class="attendance-mode-selector" role="radiogroup" aria-label="Jenis presensi">
+                                    <label class="mode-option">
+                                        <input type="radio" name="attendance-mode" value="check-in" checked>
+                                        <span class="mode-card"><span class="material-icons-round">login</span><span><strong>Check-in</strong><small>Presensi masuk</small></span></span>
+                                    </label>
+                                    <label class="mode-option">
+                                        <input type="radio" name="attendance-mode" value="check-out">
+                                        <span class="mode-card"><span class="material-icons-round">logout</span><span><strong>Check-out</strong><small>Presensi pulang</small></span></span>
+                                    </label>
+                                </div>
+                                <div class="scan-help"><span class="material-icons-round">help_outline</span><span>Pastikan wajah terlihat jelas dan tanpa penghalang.</span></div>
+                            </div>
+
+                            <div class="verification-input-wrapper">
+                                <div class="form-group compact-form-group">
+                                    <label for="scan-employee-id">ID karyawan <span class="optional-label">Opsional</span></label>
+                                    <div class="input-with-icon">
+                                        <span class="material-icons-round">badge</span>
+                                        <input type="text" id="scan-employee-id" placeholder="Kosongkan untuk pencarian otomatis" autocomplete="off">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="scanner-container">
+                                <div class="webcam-viewport scan-mode" aria-label="Area kamera presensi">
+                                    <video id="scan-video" autoplay playsinline muted></video>
+                                    <canvas id="scan-canvas"></canvas>
+                                    <div class="camera-placeholder">
+                                        <span class="material-icons-round">camera_front</span>
+                                        <strong>Siap melakukan presensi</strong>
+                                        <span>Klik tombol mulai untuk mengaktifkan kamera.</span>
+                                    </div>
+                                    <div class="scanner-hud">
+                                        <div class="hud-frame circular"></div>
+                                        <div class="scanning-dots"></div>
+                                        <div class="laser-line circle-scan"></div>
+                                        <div class="hud-status" id="scan-hud-status">Menunggu kamera</div>
+                                        <div class="hud-match-result" id="scan-match-result"></div>
+                                    </div>
+                                </div>
+                                <div class="scanner-controls scan-controls-row">
+                                    <button class="btn btn-primary btn-lg" id="btn-start-scan" type="button">
+                                        <span class="material-icons-round">videocam</span>
+                                        Mulai presensi wajah
+                                    </button>
+                                    <span class="privacy-copy"><span class="material-icons-round">lock</span> Pemrosesan biometrik dilindungi.</span>
+                                </div>
+                            </div>
+                        </section>
+
+                        <aside class="scan-side-column">
+                            <section class="panel scan-info-panel">
+                                <div class="panel-header panel-header-border">
+                                    <div>
+                                        <span class="eyebrow">Hasil verifikasi</span>
+                                        <h2>Status pemindaian</h2>
+                                    </div>
+                                </div>
+                                <div class="scan-result-card empty" id="scan-result-card">
+                                    <div class="result-avatar"><span class="material-icons-round">face</span></div>
+                                    <div class="result-details">
+                                        <h3>Belum ada pemindaian</h3>
+                                        <p>Data verifikasi karyawan akan ditampilkan setelah wajah berhasil diproses.</p>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="panel guidance-panel">
+                                <div class="guidance-title"><span class="material-icons-round">tips_and_updates</span><h3>Panduan cepat</h3></div>
+                                <ul class="guidance-list">
+                                    <li><span>1</span>Posisikan wajah di tengah bingkai.</li>
+                                    <li><span>2</span>Jaga jarak sekitar 40–70 cm.</li>
+                                    <li><span>3</span>Tunggu hingga verifikasi selesai.</li>
+                                </ul>
+                                <div class="voice-assistant-indicator">
+                                    <span class="material-icons-round ripple">volume_up</span>
+                                    <span>Panduan suara aktif</span>
+                                </div>
+                            </section>
+                        </aside>
+                    </div>
+                </section>
+
+                <section id="logs" class="tab-content" aria-labelledby="page-title">
+                    <div class="page-section-header">
+                        <div>
+                            <span class="eyebrow">Attendance records</span>
+                            <h2>Riwayat kehadiran</h2>
+                            <p>Tinjau, cari, dan ekspor catatan presensi karyawan.</p>
+                        </div>
+                        <button class="btn btn-success" id="btn-export-csv" type="button">
+                            <span class="material-icons-round">download</span>
+                            Ekspor CSV
+                        </button>
+                    </div>
+
+                    <section class="panel log-panel">
+                        <div class="table-toolbar">
+                            <div class="search-box">
+                                <span class="material-icons-round">search</span>
+                                <input type="search" id="log-search" placeholder="Cari nama atau ID karyawan..." aria-label="Cari riwayat">
+                            </div>
+                            <div class="table-toolbar-actions">
+                                <span class="table-caption"><span class="material-icons-round">info</span> Data terbaru ditampilkan lebih dahulu.</span>
+                                <button class="btn btn-danger-ghost btn-sm" id="btn-clear-logs" type="button">
+                                    <span class="material-icons-round">delete_sweep</span>
+                                    Hapus riwayat
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="logs-table">
+                                <thead>
+                                    <tr>
+                                        <th>Snapshot</th>
+                                        <th>Karyawan</th>
+                                        <th>ID</th>
+                                        <th>Waktu</th>
+                                        <th>Tipe</th>
+                                        <th>Metode</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="logs-tbody"></tbody>
+                            </table>
+                        </div>
+                    </section>
+                </section>
+
+                <section id="admin" class="tab-content" aria-labelledby="page-title">
+                    <div class="page-section-header">
+                        <div>
+                            <span class="eyebrow">Administration</span>
+                            <h2>Pengaturan dan manajemen data</h2>
+                            <p>Kelola jadwal operasional serta siklus data karyawan.</p>
+                        </div>
+                        <span class="admin-access-badge"><span class="material-icons-round">verified_user</span> Admin terverifikasi</span>
+                    </div>
+
+                    <section class="panel settings-panel">
+                        <div class="panel-header panel-header-border">
+                            <div>
+                                <span class="eyebrow">Jam operasional</span>
+                                <h2>Jadwal presensi</h2>
+                                <p class="panel-desc">Tentukan rentang waktu check-in dan check-out untuk perhitungan status otomatis.</p>
+                            </div>
+                            <span class="settings-icon material-icons-round">schedule</span>
+                        </div>
+                        <div class="settings-grid">
+                            <div class="time-setting-card checkin-setting">
+                                <div class="time-setting-head"><span class="material-icons-round">login</span><div><strong>Check-in</strong><small>Jam kedatangan</small></div></div>
+                                <div class="time-fields">
+                                    <div class="form-group"><label for="setting-checkin-start">Mulai</label><input type="time" id="setting-checkin-start"></div>
+                                    <span class="time-divider">sampai</span>
+                                    <div class="form-group"><label for="setting-checkin-end">Batas tepat waktu</label><input type="time" id="setting-checkin-end"></div>
+                                </div>
+                            </div>
+                            <div class="time-setting-card checkout-setting">
+                                <div class="time-setting-head"><span class="material-icons-round">logout</span><div><strong>Check-out</strong><small>Jam kepulangan</small></div></div>
+                                <div class="time-fields">
+                                    <div class="form-group"><label for="setting-checkout-start">Mulai</label><input type="time" id="setting-checkout-start"></div>
+                                    <span class="time-divider">sampai</span>
+                                    <div class="form-group"><label for="setting-checkout-end">Batas akhir</label><input type="time" id="setting-checkout-end"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="settings-footer">
+                            <p><span class="material-icons-round">info</span> Perubahan berlaku untuk pencatatan presensi berikutnya.</p>
+                            <button class="btn btn-primary" id="btn-save-settings" type="button"><span class="material-icons-round">save</span>Simpan jadwal</button>
+                        </div>
+                    </section>
+
+                    <section class="panel employee-management-panel">
+                        <div class="panel-header panel-header-border">
+                            <div>
+                                <span class="eyebrow">Employee lifecycle</span>
+                                <h2>Manajemen karyawan</h2>
+                                <p class="panel-desc">Nonaktifkan akun atau pulihkan profil yang berada di recycle bin.</p>
+                            </div>
+                        </div>
+
+                        <div class="management-section">
+                            <div class="management-title"><div><span class="management-dot active-dot"></span><h3>Karyawan aktif</h3></div><span class="management-hint">Profil yang dapat melakukan presensi</span></div>
+                            <div class="table-responsive">
+                                <table class="logs-table management-table">
+                                    <thead><tr><th>ID karyawan</th><th>Nama</th><th>Divisi</th><th>Aksi</th></tr></thead>
+                                    <tbody id="admin-active-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="management-section recycle-section">
+                            <div class="management-title"><div><span class="management-dot recycle-dot"></span><h3>Recycle bin</h3></div><span class="management-hint">Profil yang telah dinonaktifkan</span></div>
+                            <div class="table-responsive">
+                                <table class="logs-table management-table">
+                                    <thead><tr><th>ID karyawan</th><th>Nama</th><th>Divisi</th><th>Aksi</th></tr></thead>
+                                    <tbody id="admin-recycle-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <div class="modal" id="success-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-backdrop" data-close-modal="success"></div>
+        <div class="modal-content status-modal-content">
+            <button class="modal-close icon-btn" type="button" data-close-modal="success" aria-label="Tutup modal"><span class="material-icons-round">close</span></button>
+            <div class="modal-icon-wrap success"><span class="material-icons-round modal-icon">check</span></div>
+            <span class="eyebrow">Status sistem</span>
+            <h2 id="modal-title">Berhasil</h2>
+            <p id="modal-message">Proses berhasil diselesaikan.</p>
+            <button class="btn btn-primary btn-block" id="btn-close-modal" type="button">Selesai</button>
+        </div>
+    </div>
+
+    <div class="modal" id="admin-login-modal" role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
+        <div class="modal-backdrop" data-close-modal="admin-login"></div>
+        <div class="modal-content login-modal-content">
+            <button class="modal-close icon-btn" type="button" data-close-modal="admin-login" aria-label="Tutup modal"><span class="material-icons-round">close</span></button>
+            <div class="modal-icon-wrap primary"><span class="material-icons-round">admin_panel_settings</span></div>
+            <span class="eyebrow">Area terproteksi</span>
+            <h2 id="admin-login-title">Login administrator</h2>
+            <p>Masukkan password admin untuk mengakses data biometrik dan pengaturan sistem.</p>
+            <form id="admin-login-form">
+                <div class="form-group">
+                    <label for="admin-password">Password admin</label>
+                    <div class="input-with-icon password-input">
+                        <span class="material-icons-round">lock</span>
+                        <input type="password" id="admin-password" placeholder="Masukkan password" autocomplete="current-password" required>
+                        <button class="password-toggle" id="password-toggle" type="button" aria-label="Tampilkan password"><span class="material-icons-round">visibility</span></button>
+                    </div>
+                    <small class="form-error" id="admin-login-error" role="alert"></small>
+                </div>
+                <button class="btn btn-primary btn-block" id="admin-login-submit" type="submit">
+                    <span class="material-icons-round">login</span>
+                    Masuk sebagai admin
+                </button>
+            </form>
+            <div class="login-security-note"><span class="material-icons-round">security</span><span>Sesi admin akan berakhir otomatis setelah tidak aktif.</span></div>
+        </div>
+    </div>
+
+    <div class="session-menu" id="session-menu" aria-hidden="true">
+        <div class="session-menu-head"><span class="session-avatar"><span class="material-icons-round">person</span></span><div><strong id="session-menu-title">Operator</strong><small id="session-menu-subtitle">Belum login</small></div></div>
+        <button id="session-login-action" type="button"><span class="material-icons-round">login</span><span>Login administrator</span></button>
+        <button id="session-logout-action" class="danger-action" type="button"><span class="material-icons-round">logout</span><span>Keluar dari sesi admin</span></button>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
