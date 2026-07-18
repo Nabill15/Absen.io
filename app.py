@@ -588,7 +588,10 @@ def apply_security_headers(response):
     response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=(self)"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net 'unsafe-eval'; "
+        "script-src 'self' "
+        "https://cdn.jsdelivr.net "
+        "https://unpkg.com "
+        "'unsafe-eval'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: blob:; "
