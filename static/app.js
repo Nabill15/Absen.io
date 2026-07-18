@@ -10,7 +10,7 @@ const state = {
     animationFrameId: null,
     isScanning: false,
     audioCtx: null,
-    
+
     // AI Model State
     useRealFaceApi: false,
     modelsLoaded: false,
@@ -21,7 +21,64 @@ const state = {
     csrfToken: '',
     totalEmployees: 0,
     simulationEnabled: false,
-    timezoneLabel: 'WITA'
+    timezoneLabel: 'WITA',
+
+    // Active liveness.
+    livenessChallenge: null,
+    livenessProof: null
+};
+
+const LIVENESS_LABELS = {
+    blink: {
+        title: 'Pejamkan lalu buka mata',
+        instruction:
+            'Pejamkan kedua mata sekitar setengah detik, lalu buka kembali.'
+    },
+
+    turn_left: {
+        title: 'Menoleh ke kiri',
+        instruction:
+            'Putar kepala ke sisi kiri yang terlihat pada layar.'
+    },
+
+    turn_right: {
+        title: 'Menoleh ke kanan',
+        instruction:
+            'Putar kepala ke sisi kanan yang terlihat pada layar.'
+    }
+};
+
+const LIVENESS_CONFIG = {
+    // Mengambil lebih banyak sampel saat mata terbuka.
+    calibrationFrames: 8,
+
+    neutralFrames: 3,
+    turnStableFrames: 3,
+    identityThreshold: 0.48,
+    turnThreshold: 0.13,
+    centeredYawThreshold: 0.065,
+    minimumFaceWidthRatio: 0.22,
+
+    // Analisis dilakukan setiap siklus deteksi.
+    // Nilai lama secara tidak langsung membaca setiap 4 frame.
+    detectionFrameInterval: 2,
+
+    // Mata dianggap tertutup ketika EAR turun
+    // menjadi 84% dari kondisi mata terbuka.
+    blinkClosedRatio: 0.84,
+
+    // Mata dianggap terbuka kembali ketika EAR
+    // kembali minimal 90%.
+    blinkReopenRatio: 0.90,
+
+    // Memastikan mata kiri dan kanan sama-sama menurun.
+    blinkEyeBalanceRatio: 0.92,
+
+    // Satu sampel tertutup sudah cukup.
+    blinkMinClosedSamples: 1,
+
+    // Batas maksimal mata tertutup.
+    blinkMaxClosedMs: 1400
 };
 
 function escapeHtml(value) {
@@ -193,7 +250,7 @@ const elements = {
     themeToggle: document.getElementById('theme-toggle'),
     themeToggleIcon: document.querySelector('#theme-toggle span'),
     liveClock: document.getElementById('live-clock'),
-    
+
     // System Loader Overlay
     systemLoader: document.getElementById('system-loader'),
     loaderProgress: document.getElementById('loader-progress'),
@@ -202,13 +259,13 @@ const elements = {
     stepDetector: document.getElementById('step-detector'),
     stepLandmarks: document.getElementById('step-landmarks'),
     stepRecognition: document.getElementById('step-recognition'),
-    
+
     // Stats
     statCheckIn: document.getElementById('stat-checkin'),
     statCheckOut: document.getElementById('stat-checkout'),
     statUsers: document.getElementById('stat-users'),
     recentActivityList: document.getElementById('recent-activity-list'),
-    
+
     // Registration Tab
     registerForm: document.getElementById('register-form'),
     employeeId: document.getElementById('employee-id'),
@@ -220,7 +277,7 @@ const elements = {
     registerCanvas: document.getElementById('register-canvas'),
     registerHudStatus: document.querySelector('#register .hud-status'),
     registerMesh: document.querySelector('#register .mesh-overlay'),
-    
+
     // Scan Tab
     btnStartScan: document.getElementById('btn-start-scan'),
     scanVideo: document.getElementById('scan-video'),
@@ -230,13 +287,29 @@ const elements = {
     scanResultCard: document.getElementById('scan-result-card'),
     attendanceModes: document.getElementsByName('attendance-mode'),
     scanEmployeeId: document.getElementById('scan-employee-id'),
-    
+
+    scanLivenessPanel: document.getElementById(
+        'scan-liveness-panel'
+    ),
+
+    scanLivenessTitle: document.getElementById(
+        'scan-liveness-title'
+    ),
+
+    scanLivenessInstruction: document.getElementById(
+        'scan-liveness-instruction'
+    ),
+
+    scanLivenessProgress: document.getElementById(
+        'scan-liveness-progress'
+    ),
+
     // Logs Tab
     logsTbody: document.getElementById('logs-tbody'),
     logSearch: document.getElementById('log-search'),
     btnClearLogs: document.getElementById('btn-clear-logs'),
     btnExportCsv: document.getElementById('btn-export-csv'),
-    
+
     // Modals
     successModal: document.getElementById('success-modal'),
     modalTitle: document.getElementById('modal-title'),
@@ -274,7 +347,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initFaceApi() {
     // Load from local static assets served by Flask
     const MODEL_URL = '/static/models/';
-    
+
     // Timer to offer fallback/skip loader if connection is slow/offline (5 seconds timeout)
     const fallbackTimer = setTimeout(() => {
         if (elements.btnSkipLoader) {
@@ -284,49 +357,49 @@ async function initFaceApi() {
             elements.btnSkipLoader.style.display = 'block';
         }
     }, 5000);
-    
+
     try {
         // Step 1: Check Library availability
         updateStepStatus(elements.stepCore, 'active', 'Memuat TensorFlow Core...');
         await sleep(400);
-        
+
         if (typeof faceapi === 'undefined') {
             throw new Error("faceapi library not loaded from CDN");
         }
         updateStepStatus(elements.stepCore, 'done', 'TensorFlow Core Loaded');
         elements.loaderProgress.style.width = '25%';
-        
+
         // Step 2: Load Tiny Face Detector
         updateStepStatus(elements.stepDetector, 'active', 'Memuat Pendeteksi Wajah...');
         await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
         updateStepStatus(elements.stepDetector, 'done', 'Tiny Face Detector Loaded');
         elements.loaderProgress.style.width = '50%';
-        
+
         // Step 3: Load Landmarks Model
         updateStepStatus(elements.stepLandmarks, 'active', 'Memuat Titik Landmark Wajah...');
         await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
         updateStepStatus(elements.stepLandmarks, 'done', 'Landmarks 68 Model Loaded');
         elements.loaderProgress.style.width = '75%';
-        
+
         // Step 4: Load Face Recognition Model
         updateStepStatus(elements.stepRecognition, 'active', 'Memuat Pengenal Identitas...');
         await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
         updateStepStatus(elements.stepRecognition, 'done', 'Face Recognition Loaded');
         elements.loaderProgress.style.width = '100%';
-        
+
         clearTimeout(fallbackTimer);
         await sleep(500); // Visual lock on 100% progress
-        
+
         state.useRealFaceApi = true;
         state.modelsLoaded = true;
-        
+
         // Hide loader overlay
         elements.systemLoader.classList.add('fade-out');
         document.querySelector('.sidebar .status-dot').className = 'status-dot online';
         document.querySelector('.sidebar .system-status').textContent = 'Sistem AI Aktif';
-        
+
         console.log("Face-API models successfully initialized locally from Flask server.");
-        
+
     } catch (error) {
         console.error("AI Initialization failed:", error);
         clearTimeout(fallbackTimer);
@@ -338,9 +411,9 @@ function updateStepStatus(element, status, text) {
     if (!element) return;
     const icon = element.querySelector('.material-icons-round');
     const label = element.querySelector('span:last-child');
-    
+
     if (label) label.textContent = text;
-    
+
     element.className = `status-step ${status}`;
     if (status === 'active') {
         if (icon) {
@@ -398,20 +471,20 @@ function playSound(type) {
         if (!state.audioCtx) {
             state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
-        
+
         const ctx = state.audioCtx;
         if (ctx.state === 'suspended') {
             ctx.resume();
         }
-        
+
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        
+
         osc.connect(gain);
         gain.connect(ctx.destination);
-        
+
         const now = ctx.currentTime;
-        
+
         if (type === 'beep') {
             osc.type = 'sine';
             osc.frequency.setValueAtTime(800, now);
@@ -485,7 +558,7 @@ async function switchTab(tabId) {
     if (state.mediaStream) {
         stopCamera();
     }
-    
+
     elements.tabs.forEach(tab => {
         if (tab.getAttribute('data-tab') === tabId) {
             tab.classList.add('active');
@@ -493,7 +566,7 @@ async function switchTab(tabId) {
             tab.classList.remove('active');
         }
     });
-    
+
     const titleMap = {
         'dashboard': { title: 'Dashboard Presensi', subtitle: 'Ringkasan aktivitas absensi hari ini' },
         'register': { title: 'Daftar Biometrik Wajah', subtitle: 'Rekam identitas biometrik karyawan secara aman' },
@@ -501,7 +574,7 @@ async function switchTab(tabId) {
         'logs': { title: 'Riwayat Kehadiran', subtitle: 'Tinjau dan ekspor catatan kehadiran karyawan' },
         'admin': { title: 'Admin Panel', subtitle: 'Kelola jadwal, akun karyawan, dan recycle bin' }
     };
-    
+
     if (titleMap[tabId]) {
         document.getElementById('page-title').textContent = titleMap[tabId].title;
         document.getElementById('page-subtitle').textContent = titleMap[tabId].subtitle;
@@ -510,7 +583,7 @@ async function switchTab(tabId) {
     }
     closeMobileSidebar();
     closeSessionMenu();
-    
+
     elements.sections.forEach(section => {
         if (section.id === tabId) {
             section.classList.add('active');
@@ -518,9 +591,9 @@ async function switchTab(tabId) {
             section.classList.remove('active');
         }
     });
-    
+
     state.currentTab = tabId;
-    
+
     if (tabId === 'logs') {
         await loadData();
         renderLogs();
@@ -691,7 +764,7 @@ async function startCamera(videoElement) {
     if (state.mediaStream) {
         stopCamera();
     }
-    
+
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
@@ -701,14 +774,32 @@ async function startCamera(videoElement) {
             },
             audio: false
         });
-        
+
         state.mediaStream = stream;
         videoElement.srcObject = stream;
-        
+
         return new Promise((resolve) => {
-            videoElement.onloadedmetadata = () => {
-                resolve(true);
+            const finish = async () => {
+                try {
+                    await videoElement.play();
+                    resolve(true);
+
+                } catch (playError) {
+                    console.error(
+                        'Video playback failed:',
+                        playError
+                    );
+
+                    resolve(false);
+                }
             };
+
+            if (videoElement.readyState >= 1) {
+                finish();
+            } else {
+                videoElement.onloadedmetadata =
+                    finish;
+            }
         });
     } catch (error) {
         console.error("Camera access failed:", error);
@@ -722,12 +813,12 @@ function stopCamera() {
         cancelAnimationFrame(state.animationFrameId);
         state.animationFrameId = null;
     }
-    
+
     if (state.mediaStream) {
         state.mediaStream.getTracks().forEach(track => track.stop());
         state.mediaStream = null;
     }
-    
+
     elements.registerVideo.srcObject = null;
     elements.scanVideo.srcObject = null;
     state.isScanning = false;
@@ -748,7 +839,7 @@ function resetRegisterTab() {
     const canvas = elements.registerCanvas;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     const progressRing = document.querySelector('.progress-ring__circle');
     if (progressRing) progressRing.style.strokeDashoffset = 691;
     const progressText = document.getElementById('register-progress-text');
@@ -766,23 +857,23 @@ async function startRegisterCamera() {
         showToast('Data belum lengkap', 'Lengkapi ID, nama, dan jabatan karyawan terlebih dahulu.', 'warning');
         return;
     }
-    
+
     const id = elements.employeeId.value.trim().toUpperCase();
     const exists = state.employees.some(emp => emp.id === id);
     if (exists) {
         showToast('ID sudah terdaftar', `Karyawan dengan ID ${id} sudah tersedia. Gunakan ID lain.`, 'warning');
         return;
     }
-    
+
     const success = await startCamera(elements.registerVideo);
     if (success) {
         elements.registerHudStatus.textContent = "Mengkalibrasi Kamera...";
         elements.registerHudStatus.style.backgroundColor = "rgba(0, 229, 255, 0.2)";
         elements.registerHudStatus.style.color = "var(--secondary)";
-        
+
         elements.registerCanvas.width = elements.registerVideo.videoWidth;
         elements.registerCanvas.height = elements.registerVideo.videoHeight;
-        
+
         animateRegisterCanvas();
     }
 }
@@ -791,21 +882,21 @@ function animateRegisterCanvas() {
     const canvas = elements.registerCanvas;
     const ctx = canvas.getContext('2d');
     const video = elements.registerVideo;
-    
+
     let frameCounter = 0;
     let registerProgress = 0;
     let phase = 0; // 0:Center, 1:Left, 2:Right, 3:Up, 4:Down
     let isCapturing = false;
-    
+
     const progressRing = document.querySelector('.progress-ring__circle');
     const progressText = document.getElementById('register-progress-text');
     const laser = document.getElementById('register-laser');
-    
+
     progressText.style.display = 'block';
     laser.style.display = 'block';
-    
+
     const circumference = 691;
-    
+
     const phaseMessages = [
         "Tatap lurus ke depan",
         "Perlahan tengok ke Kiri",
@@ -813,30 +904,30 @@ function animateRegisterCanvas() {
         "Perlahan tengok ke Atas",
         "Perlahan tengok ke Bawah"
     ];
-    
+
     function setProgress(percent, msg) {
         const offset = circumference - (percent / 100) * circumference;
         progressRing.style.strokeDashoffset = offset;
         progressText.textContent = `${msg} ... ${Math.floor(percent)}%`;
     }
-    
+
     setProgress(0, phaseMessages[0]);
-    
+
     async function draw() {
         if (!state.mediaStream || isCapturing) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         frameCounter++;
-        
+
         if (state.useRealFaceApi && frameCounter % 4 === 0) {
             try {
                 const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
                     .withFaceLandmarks()
                     .withFaceDescriptor();
-                
+
                 if (detection) {
                     state.activeDescriptor = detection.descriptor;
                     state.detectedFaceBox = detection.detection.box;
-                    
+
                     const landmarks = detection.landmarks.positions;
                     const noseTip = landmarks[30];
                     const jawLeft = landmarks[0];
@@ -844,18 +935,18 @@ function animateRegisterCanvas() {
                     const leftEye = landmarks[36];
                     const rightEye = landmarks[45];
                     const jawBottom = landmarks[8];
-                    
+
                     const distLeft = noseTip.x - jawLeft.x;
                     const distRight = jawRight.x - noseTip.x;
                     const yawRatio = distLeft / (distLeft + distRight + 0.001);
-                    
+
                     const eyeCenterY = (leftEye.y + rightEye.y) / 2;
                     const distEyeNose = noseTip.y - eyeCenterY;
                     const distNoseChin = jawBottom.y - noseTip.y;
                     const pitchRatio = distEyeNose / (distEyeNose + distNoseChin + 0.001);
-                    
+
                     let targetMet = false;
-                    
+
                     if (phase === 0) {
                         if (yawRatio > 0.4 && yawRatio < 0.6 && pitchRatio > 0.35 && pitchRatio < 0.55) targetMet = true;
                     } else if (phase === 1) { // Left
@@ -867,7 +958,7 @@ function animateRegisterCanvas() {
                     } else if (phase === 4) { // Down
                         if (pitchRatio > 0.52) targetMet = true;
                     }
-                    
+
                     if (targetMet) {
                         registerProgress += 2.5;
                         elements.registerHudStatus.style.backgroundColor = "rgba(0, 255, 136, 0.25)";
@@ -894,13 +985,13 @@ function animateRegisterCanvas() {
                         elements.registerHudStatus.style.backgroundColor = "rgba(245, 158, 11, 0.2)";
                         elements.registerHudStatus.style.color = "var(--warning)";
                     }
-                    
+
                     elements.registerHudStatus.textContent = phaseMessages[phase];
-                    
+
                 } else {
                     state.activeDescriptor = null;
                     state.detectedFaceBox = null;
-                    
+
                     elements.registerHudStatus.textContent = "Arahkan Wajah ke Dalam Lingkaran";
                     elements.registerHudStatus.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
                     elements.registerHudStatus.style.color = "var(--danger)";
@@ -914,21 +1005,21 @@ function animateRegisterCanvas() {
             elements.registerHudStatus.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
             elements.registerHudStatus.style.color = 'var(--danger)';
         }
-        
+
         if (state.useRealFaceApi && state.detectedFaceBox) {
             const box = state.detectedFaceBox;
             ctx.strokeStyle = 'rgba(0, 255, 136, 0.4)';
             ctx.lineWidth = 1;
             ctx.strokeRect(box.x, box.y, box.width, box.height);
-            
+
             const timeFactor = Date.now() * 0.003;
             const points = [
-                {x: box.x + box.width * 0.25, y: box.y + box.height * 0.35},
-                {x: box.x + box.width * 0.75, y: box.y + box.height * 0.35},
-                {x: box.x + box.width * 0.5, y: box.y + box.height * 0.55},
-                {x: box.x + box.width * 0.5, y: box.y + box.height * 0.75}
+                { x: box.x + box.width * 0.25, y: box.y + box.height * 0.35 },
+                { x: box.x + box.width * 0.75, y: box.y + box.height * 0.35 },
+                { x: box.x + box.width * 0.5, y: box.y + box.height * 0.55 },
+                { x: box.x + box.width * 0.5, y: box.y + box.height * 0.75 }
             ];
-            
+
             ctx.fillStyle = 'var(--secondary)';
             points.forEach((pt, idx) => {
                 const wiggle = Math.sin(timeFactor + idx) * 1.2;
@@ -937,10 +1028,10 @@ function animateRegisterCanvas() {
                 ctx.fill();
             });
         }
-        
+
         state.animationFrameId = requestAnimationFrame(draw);
     }
-    
+
     state.animationFrameId = requestAnimationFrame(draw);
 }
 
@@ -950,24 +1041,24 @@ async function captureRegisterFace() {
         showToast('Wajah tidak terdeteksi', 'Arahkan wajah ke tengah kamera dan pastikan pencahayaan cukup.', 'error');
         return;
     }
-    
+
     const video = elements.registerVideo;
     const canvas = document.createElement('canvas');
     canvas.width = 320;
     canvas.height = 240;
     const ctx = canvas.getContext('2d');
-    
+
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const photoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-    
+
     playSound('beep');
-    
+
     const id = elements.employeeId.value.trim().toUpperCase();
     const name = elements.employeeName.value.trim();
     const role = elements.employeeRole.value.trim();
-    
+
     const descriptorToSave = state.registrationDescriptors.filter(
         descriptor => Array.isArray(descriptor) && descriptor.length === 128
     );
@@ -976,7 +1067,7 @@ async function captureRegisterFace() {
         showToast('Data wajah belum cukup', 'Minimal tiga sudut wajah harus berhasil direkam.', 'error');
         return;
     }
-    
+
     // SEND TO FLASK SERVER
     const payload = {
         id,
@@ -985,7 +1076,7 @@ async function captureRegisterFace() {
         photo: photoDataUrl,
         descriptor: descriptorToSave
     };
-    
+
     try {
         const response = await apiFetch('/api/register', {
             method: 'POST',
@@ -993,7 +1084,7 @@ async function captureRegisterFace() {
             body: JSON.stringify(payload)
         });
         const result = await response.json();
-        
+
         if (response.ok) {
             stopCamera();
             showModal('Registrasi Wajah Sukses', `Biometrik wajah <strong>${escapeHtml(name)}</strong> (ID: ${escapeHtml(id)}) telah diverifikasi dan disimpan ke server.`);
@@ -1019,7 +1110,7 @@ function resetScanTab() {
     elements.scanHudStatus.style.backgroundColor = "";
     elements.scanHudStatus.style.color = "";
     elements.scanMatchResult.style.display = "none";
-    
+
     elements.scanResultCard.className = "scan-result-card empty";
     elements.scanResultCard.innerHTML = `
         <div class="result-avatar">
@@ -1035,123 +1126,1124 @@ function resetScanTab() {
     state.detectedFaceBox = null;
 }
 
-async function startScanCamera() {
-    if (!state.useRealFaceApi && !state.simulationEnabled) {
-        playSound('error');
-        showToast('Model AI belum aktif', 'Muat ulang halaman setelah koneksi atau file model tersedia.', 'warning');
+function updateLivenessPanel(
+    actions,
+    activeIndex = -1,
+    mode = 'active',
+    customTitle = '',
+    customInstruction = ''
+) {
+    const panel = elements.scanLivenessPanel;
+
+    if (!panel) return;
+
+    panel.classList.remove(
+        'is-active',
+        'is-success',
+        'is-error'
+    );
+
+    if (mode === 'active') {
+        panel.classList.add('is-active');
+    }
+
+    if (mode === 'success') {
+        panel.classList.add('is-success');
+    }
+
+    if (mode === 'error') {
+        panel.classList.add('is-error');
+    }
+
+    if (customTitle) {
+        elements.scanLivenessTitle.textContent = customTitle;
+    }
+
+    if (customInstruction) {
+        elements.scanLivenessInstruction.textContent =
+            customInstruction;
+    }
+
+    if (!Array.isArray(actions)) {
+        elements.scanLivenessTitle.textContent =
+            'Pemeriksaan keaslian belum dimulai';
+
+        elements.scanLivenessInstruction.textContent =
+            'Ikuti gerakan acak agar foto atau video tidak dapat digunakan.';
+
+        elements.scanLivenessProgress.innerHTML = '';
         return;
     }
+
+    elements.scanLivenessProgress.innerHTML = actions
+        .map((_, index) => {
+            const status =
+                index < activeIndex
+                    ? 'done'
+                    : index === activeIndex
+                        ? 'active'
+                        : '';
+
+            return `
+                <span
+                    class="liveness-step ${status}"
+                    aria-hidden="true">
+                </span>
+            `;
+        })
+        .join('');
+}
+
+
+async function requestLivenessChallenge() {
+    const controller = new AbortController();
+
+    const timeoutId = window.setTimeout(
+        () => controller.abort(),
+        8000
+    );
+
+    try {
+        const response = await fetch(
+            '/api/liveness/challenge',
+            {
+                method: 'GET',
+                credentials: 'same-origin',
+                cache: 'no-store',
+
+                headers: {
+                    Accept: 'application/json'
+                },
+
+                signal: controller.signal
+            }
+        );
+
+        const contentType =
+            response.headers.get(
+                'content-type'
+            ) || '';
+
+        if (
+            !contentType.includes(
+                'application/json'
+            )
+        ) {
+            throw new Error(
+                `Endpoint liveness tidak mengirim JSON ` +
+                `(HTTP ${response.status}). ` +
+                `Pastikan app.py terbaru sudah dijalankan.`
+            );
+        }
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.message ||
+                `Gagal membuat tantangan ` +
+                `(HTTP ${response.status}).`
+            );
+        }
+
+        if (
+            !result.challenge_id ||
+            !Array.isArray(result.actions) ||
+            result.actions.length < 2
+        ) {
+            throw new Error(
+                'Respons tantangan liveness tidak valid.'
+            );
+        }
+
+        return result;
+
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error(
+                'Server tidak merespons endpoint ' +
+                'liveness dalam 8 detik. ' +
+                'Restart aplikasi Flask.'
+            );
+        }
+
+        throw error;
+
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
+
+function pointDistance(firstPoint, secondPoint) {
+    return Math.hypot(
+        firstPoint.x - secondPoint.x,
+        firstPoint.y - secondPoint.y
+    );
+}
+
+
+function eyeAspectRatio(points) {
+    if (!Array.isArray(points) || points.length !== 6) {
+        return 0;
+    }
+
+    const verticalA = pointDistance(
+        points[1],
+        points[5]
+    );
+
+    const verticalB = pointDistance(
+        points[2],
+        points[4]
+    );
+
+    const horizontal = pointDistance(
+        points[0],
+        points[3]
+    );
+
+    if (horizontal <= 0) {
+        return 0;
+    }
+
+    return (
+        verticalA + verticalB
+    ) / (
+            2 * horizontal
+        );
+}
+
+
+function averagePoint(points) {
+    const total = points.reduce(
+        (accumulator, point) => ({
+            x: accumulator.x + point.x,
+            y: accumulator.y + point.y
+        }),
+        {
+            x: 0,
+            y: 0
+        }
+    );
+
+    return {
+        x: total.x / points.length,
+        y: total.y / points.length
+    };
+}
+
+
+function getLivenessMetrics(landmarks) {
+    const positions = landmarks.positions;
+
+    const leftEye = positions.slice(36, 42);
+    const rightEye = positions.slice(42, 48);
+
+    const leftCenter = averagePoint(leftEye);
+    const rightCenter = averagePoint(rightEye);
+
+    const eyeMidpointX =
+        (leftCenter.x + rightCenter.x) / 2;
+
+    const eyeSpan = Math.abs(
+        rightCenter.x - leftCenter.x
+    );
+
+    const noseTip = positions[30];
+
+    // Hitung mata kiri dan kanan secara terpisah.
+    const leftEar = eyeAspectRatio(leftEye);
+    const rightEar = eyeAspectRatio(rightEye);
+
+    return {
+        leftEar,
+        rightEar,
+
+        // Rata-rata kedua mata.
+        ear: (leftEar + rightEar) / 2,
+
+        rawYaw:
+            eyeSpan > 0
+                ? (noseTip.x - eyeMidpointX) / eyeSpan
+                : 0
+    };
+}
+
+function percentile(values, ratio = 0.75) {
+    if (
+        !Array.isArray(values) ||
+        values.length === 0
+    ) {
+        return 0;
+    }
+
+    const sorted = [...values].sort(
+        (a, b) => a - b
+    );
+
+    const index = Math.min(
+        sorted.length - 1,
+        Math.max(
+            0,
+            Math.round(
+                (sorted.length - 1) * ratio
+            )
+        )
+    );
+
+    return sorted[index];
+}
+
+
+function descriptorDistance(first, second) {
+    if (
+        !first ||
+        !second ||
+        first.length !== second.length
+    ) {
+        return Infinity;
+    }
+
+    let sum = 0;
+
+    for (
+        let index = 0;
+        index < first.length;
+        index++
+    ) {
+        const difference =
+            first[index] - second[index];
+
+        sum += difference * difference;
+    }
+
+    return Math.sqrt(sum);
+}
+
+
+function averageDescriptors(descriptors) {
+    if (
+        !Array.isArray(descriptors) ||
+        descriptors.length === 0
+    ) {
+        return null;
+    }
+
+    const output = new Float32Array(
+        descriptors[0].length
+    );
+
+    descriptors.forEach(descriptor => {
+        for (
+            let index = 0;
+            index < output.length;
+            index++
+        ) {
+            output[index] += descriptor[index];
+        }
+    });
+
+    for (
+        let index = 0;
+        index < output.length;
+        index++
+    ) {
+        output[index] /= descriptors.length;
+    }
+
+    return output;
+}
+
+
+function isFacePositionValid(box, canvas) {
+    const centerX = box.x + box.width / 2;
+    const centerY = box.y + box.height / 2;
+
+    const horizontalOffset = Math.abs(
+        centerX - canvas.width / 2
+    ) / canvas.width;
+
+    const verticalOffset = Math.abs(
+        centerY - canvas.height / 2
+    ) / canvas.height;
+
+    return (
+        box.width >=
+        canvas.width *
+        LIVENESS_CONFIG.minimumFaceWidthRatio
+        &&
+        horizontalOffset <= 0.22
+        &&
+        verticalOffset <= 0.25
+    );
+}
+
+async function startScanCamera() {
+    if (
+        !state.useRealFaceApi &&
+        !state.simulationEnabled
+    ) {
+        playSound('error');
+
+        showToast(
+            'Model AI belum aktif',
+            'Muat ulang halaman setelah koneksi atau file model tersedia.',
+            'warning'
+        );
+
+        return;
+    }
+
     if (state.totalEmployees === 0) {
         playSound('error');
-        showToast('Belum ada profil wajah', 'Daftarkan karyawan terlebih dahulu sebelum melakukan presensi.', 'warning');
+
+        showToast(
+            'Belum ada profil wajah',
+            'Daftarkan karyawan terlebih dahulu sebelum melakukan presensi.',
+            'warning'
+        );
+
         switchTab('register');
         return;
     }
-    
-    const success = await startCamera(elements.scanVideo);
-    if (success) {
-        resetScanTab();
-        elements.scanHudStatus.textContent = "Mengkalibrasi Pemindai...";
-        elements.scanHudStatus.style.backgroundColor = "rgba(0, 229, 255, 0.2)";
-        elements.scanHudStatus.style.color = "var(--secondary)";
-        
-        elements.scanCanvas.width = elements.scanVideo.videoWidth;
-        elements.scanCanvas.height = elements.scanVideo.videoHeight;
-        
-        state.isScanning = true;
-        animateScanCanvas();
+
+    const success = await startCamera(
+        elements.scanVideo
+    );
+
+    if (!success) {
+        return;
     }
+
+    resetScanTab();
+
+    elements.scanHudStatus.textContent =
+        'Membuat Tantangan Acak...';
+
+    elements.scanHudStatus.style.backgroundColor =
+        'rgba(0, 229, 255, 0.2)';
+
+    elements.scanHudStatus.style.color =
+        'var(--secondary)';
+
+    try {
+        state.livenessChallenge =
+            await requestLivenessChallenge();
+        elements.scanHudStatus.textContent =
+            'KALIBRASI WAJAH...';
+
+        elements.scanHudStatus.style.backgroundColor =
+            'rgba(0, 229, 255, 0.2)';
+
+        elements.scanHudStatus.style.color =
+            'var(--secondary)';
+    } catch (error) {
+        stopCamera();
+        playSound('error');
+
+        updateLivenessPanel(
+            null,
+            -1,
+            'error',
+            'Tantangan gagal dibuat',
+            error.message
+        );
+
+        showToast(
+            'Pemeriksaan keaslian gagal',
+            error.message,
+            'error'
+        );
+
+        return;
+    }
+
+    elements.scanCanvas.width =
+        elements.scanVideo.videoWidth;
+
+    elements.scanCanvas.height =
+        elements.scanVideo.videoHeight;
+
+    state.isScanning = true;
+
+    updateLivenessPanel(
+        state.livenessChallenge.actions,
+        0,
+        'active',
+        'Kalibrasi wajah',
+        'Hadap lurus, buka mata, dan jangan bergerak sesaat.'
+    );
+
+    animateScanCanvas(
+        state.livenessChallenge
+    );
 }
 
-function animateScanCanvas() {
+function animateScanCanvas(challenge) {
     const canvas = elements.scanCanvas;
     const ctx = canvas.getContext('2d');
     const video = elements.scanVideo;
-    
-    let frameCounter = 0;
-    let detectionSuccessStreak = 0;
-    
+    const startedAt = performance.now();
+
+    let blinkClosedFrames = 0;
+    let blinkWasClosed = false;
+    let blinkClosedAt = 0;
+
+    let waitingForNeutral = false;
+    let baselineDescriptor = null;
+
+    let neutralYaw = 0;
+    let neutralEar = 0;
+    let neutralLeftEar = 0;
+    let neutralRightEar = 0;
+
+    let yawAccumulator = 0;
+
+    const earSamples = [];
+    const leftEarSamples = [];
+    const rightEarSamples = [];
+
+    let bestActionScore = 0;
+
+    const proofSteps = [];
+    const verifiedDescriptors = [];
+
+    function setInstruction(title, instruction) {
+        updateLivenessPanel(
+            challenge.actions,
+            currentActionIndex,
+            'active',
+            title,
+            instruction
+        );
+
+        elements.scanHudStatus.textContent =
+            title.toUpperCase();
+
+        elements.scanHudStatus.style.backgroundColor =
+            'rgba(0, 229, 255, 0.2)';
+
+        elements.scanHudStatus.style.color =
+            'var(--secondary)';
+    }
+
+    function resetActionCounters() {
+        stableActionFrames = 0;
+        blinkClosedFrames = 0;
+        blinkWasClosed = false;
+        blinkClosedAt = 0;
+        bestActionScore = 0;
+    }
+
+    function showCurrentAction() {
+        const action =
+            challenge.actions[currentActionIndex];
+
+        const label =
+            LIVENESS_LABELS[action];
+
+        setInstruction(
+            label.title,
+            label.instruction
+        );
+    }
+
+    function finishWithError(message) {
+        state.isScanning = false;
+
+        stopCamera();
+
+        updateLivenessPanel(
+            challenge.actions,
+            currentActionIndex,
+            'error',
+            'Pemeriksaan keaslian gagal',
+            message
+        );
+
+        failVerification(message);
+    }
+
+    function completeAction(
+        action,
+        score,
+        descriptor
+    ) {
+        proofSteps.push({
+            action,
+            score: Number(
+                Math.max(0, score).toFixed(4)
+            ),
+            at_ms: Math.round(
+                performance.now() - startedAt
+            )
+        });
+
+        verifiedDescriptors.push(
+            Float32Array.from(descriptor)
+        );
+
+        playSound('success');
+
+        bestActionScore = 0;
+
+        const isLastAction =
+            currentActionIndex >=
+            challenge.actions.length - 1;
+
+        if (isLastAction) {
+            const finalDescriptor =
+                averageDescriptors(
+                    verifiedDescriptors
+                );
+
+            if (!finalDescriptor) {
+                finishWithError(
+                    'Descriptor wajah tidak dapat dibentuk setelah pemeriksaan.'
+                );
+
+                return;
+            }
+
+            state.isScanning = false;
+
+            state.livenessProof = {
+                challengeId:
+                    challenge.challenge_id,
+
+                steps:
+                    proofSteps,
+
+                durationMs:
+                    Math.round(
+                        performance.now() -
+                        startedAt
+                    )
+            };
+
+            updateLivenessPanel(
+                challenge.actions,
+                challenge.actions.length,
+                'success',
+                'Wajah hidup terverifikasi',
+                'Seluruh gerakan berhasil. Memverifikasi identitas...'
+            );
+
+            elements.scanHudStatus.textContent =
+                'LIVENESS BERHASIL';
+
+            processFaceMatch(
+                finalDescriptor,
+                state.livenessProof
+            );
+
+            return;
+        }
+
+        waitingForNeutral = true;
+        neutralFrames = 0;
+
+        resetActionCounters();
+
+        setInstruction(
+            'Kembali hadap depan',
+            'Hadap lurus kembali sebelum gerakan berikutnya.'
+        );
+    }
+
     async function draw() {
-        if (!state.mediaStream || !state.isScanning) return;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (
+            !state.mediaStream ||
+            !state.isScanning
+        ) {
+            return;
+        }
+
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
         frameCounter++;
-        
+
+        const elapsedMs =
+            performance.now() - startedAt;
+
+        const challengeLimit =
+            Number(
+                challenge.expires_in || 45
+            ) * 1000;
+
+        if (
+            elapsedMs >
+            challengeLimit - 750
+        ) {
+            finishWithError(
+                'Waktu tantangan habis. Silakan mulai pemindaian kembali.'
+            );
+
+            return;
+        }
+
         const faceX = canvas.width / 2;
         const faceY = canvas.height / 2;
         const radius = 110;
-        
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.3)';
+
+        ctx.strokeStyle =
+            'rgba(0, 229, 255, 0.3)';
+
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 8]);
-        ctx.beginPath(); ctx.arc(faceX, faceY, radius, 0, Math.PI * 2); ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(
+            faceX,
+            faceY,
+            radius,
+            0,
+            Math.PI * 2
+        );
+        ctx.stroke();
+
         ctx.setLineDash([]);
-        
-        const angle = (Date.now() * 0.002);
-        ctx.strokeStyle = 'var(--secondary)';
+
+        const angle =
+            Date.now() * 0.002;
+
+        ctx.strokeStyle =
+            'var(--secondary)';
+
         ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(faceX, faceY, radius + 5, angle, angle + Math.PI / 4); ctx.stroke();
-        ctx.beginPath(); ctx.arc(faceX, faceY, radius + 5, angle + Math.PI, angle + Math.PI + Math.PI / 4); ctx.stroke();
-        
-        if (state.useRealFaceApi && frameCounter % 4 === 0) {
+
+        ctx.beginPath();
+        ctx.arc(
+            faceX,
+            faceY,
+            radius + 5,
+            angle,
+            angle + Math.PI / 4
+        );
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(
+            faceX,
+            faceY,
+            radius + 5,
+            angle + Math.PI,
+            angle + Math.PI + Math.PI / 4
+        );
+        ctx.stroke();
+
+        if (
+            state.useRealFaceApi &&
+            frameCounter %
+            LIVENESS_CONFIG.detectionFrameInterval ===
+            0
+        ) {
             try {
-                const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
-                    .withFaceLandmarks()
-                    .withFaceDescriptor();
-                
-                if (detection) {
-                    state.activeDescriptor = detection.descriptor;
-                    state.detectedFaceBox = detection.detection.box;
-                    detectionSuccessStreak++;
-                    
-                    elements.scanHudStatus.textContent = "MEMINDAI WAJAH...";
-                    elements.scanHudStatus.style.backgroundColor = "rgba(0, 255, 136, 0.2)";
-                    elements.scanHudStatus.style.color = "var(--primary)";
-                    
-                    if (detectionSuccessStreak >= 3) {
-                        state.isScanning = false;
-                        processFaceMatch(detection.descriptor);
-                        return;
-                    }
-                } else {
+                const detections =
+                    await faceapi
+                        .detectAllFaces(
+                            video,
+                            new faceapi
+                                .TinyFaceDetectorOptions({
+                                    inputSize: 224,
+                                    scoreThreshold: 0.55
+                                })
+                        )
+                        .withFaceLandmarks()
+                        .withFaceDescriptors();
+
+                if (detections.length !== 1) {
                     state.activeDescriptor = null;
                     state.detectedFaceBox = null;
-                    detectionSuccessStreak = 0;
-                    
-                    elements.scanHudStatus.textContent = "MENCARI WAJAH...";
-                    elements.scanHudStatus.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
-                    elements.scanHudStatus.style.color = "var(--danger)";
+
+                    resetActionCounters();
+
+                    elements.scanHudStatus.textContent =
+                        detections.length > 1
+                            ? 'HANYA SATU WAJAH'
+                            : 'MENCARI WAJAH...';
+
+                    elements.scanHudStatus
+                        .style.backgroundColor =
+                        'rgba(239, 68, 68, 0.15)';
+
+                    elements.scanHudStatus
+                        .style.color =
+                        'var(--danger)';
+
+                    if (detections.length > 1) {
+                        updateLivenessPanel(
+                            challenge.actions,
+                            currentActionIndex,
+                            'error',
+                            'Terdeteksi lebih dari satu wajah',
+                            'Pastikan hanya satu orang berada di depan kamera.'
+                        );
+                    }
+                } else {
+                    const detection =
+                        detections[0];
+
+                    const descriptor =
+                        detection.descriptor;
+
+                    const box =
+                        detection.detection.box;
+
+                    const metrics =
+                        getLivenessMetrics(
+                            detection.landmarks
+                        );
+
+                    state.activeDescriptor =
+                        descriptor;
+
+                    state.detectedFaceBox =
+                        box;
+
+                    if (
+                        !isFacePositionValid(
+                            box,
+                            canvas
+                        )
+                    ) {
+                        resetActionCounters();
+
+                        elements.scanHudStatus
+                            .textContent =
+                            'POSISIKAN WAJAH DI TENGAH';
+
+                        updateLivenessPanel(
+                            challenge.actions,
+                            currentActionIndex,
+                            'active',
+                            'Atur posisi wajah',
+                            'Dekatkan dan tempatkan wajah tepat di tengah bingkai.'
+                        );
+                    } else if (
+                        calibrationFrames <
+                        LIVENESS_CONFIG
+                            .calibrationFrames
+                    ) {
+                        yawAccumulator += metrics.rawYaw;
+
+                        earSamples.push(metrics.ear);
+                        leftEarSamples.push(metrics.leftEar);
+                        rightEarSamples.push(metrics.rightEar);
+
+                        calibrationFrames++;
+
+                        baselineDescriptor =
+                            baselineDescriptor ||
+                            Float32Array.from(
+                                descriptor
+                            );
+
+                        elements.scanHudStatus
+                            .textContent =
+                            `KALIBRASI ${calibrationFrames}/${LIVENESS_CONFIG.calibrationFrames}`;
+
+                        if (
+                            calibrationFrames ===
+                            LIVENESS_CONFIG
+                                .calibrationFrames
+                        ) {
+                            neutralYaw =
+                                yawAccumulator / calibrationFrames;
+
+                            // Mengambil nilai mata terbuka yang stabil.
+                            // Kedipan ketika kalibrasi tidak merusak baseline.
+                            neutralEar = percentile(
+                                earSamples,
+                                0.75
+                            );
+
+                            neutralLeftEar = percentile(
+                                leftEarSamples,
+                                0.75
+                            );
+
+                            neutralRightEar = percentile(
+                                rightEarSamples,
+                                0.75
+                            );
+
+                            if (
+                                neutralEar <= 0.12 ||
+                                neutralLeftEar <= 0.10 ||
+                                neutralRightEar <= 0.10
+                            ) {
+                                finishWithError(
+                                    'Mata tidak terbaca dengan baik. ' +
+                                    'Perbaiki pencahayaan dan ulangi.'
+                                );
+
+                                return;
+                            }
+
+                            showCurrentAction();
+                        }
+                    } else if (
+                        descriptorDistance(
+                            baselineDescriptor,
+                            descriptor
+                        ) >
+                        LIVENESS_CONFIG
+                            .identityThreshold
+                    ) {
+                        finishWithError(
+                            'Wajah berubah selama pemeriksaan. Pastikan orang yang sama tetap di depan kamera.'
+                        );
+
+                        return;
+                    } else {
+                        const relativeYaw =
+                            metrics.rawYaw -
+                            neutralYaw;
+
+                        const eyesOpen =
+                            metrics.ear >=
+                            neutralEar * 0.86;
+
+                        if (waitingForNeutral) {
+                            const isCentered =
+                                Math.abs(
+                                    relativeYaw
+                                ) <=
+                                LIVENESS_CONFIG
+                                    .centeredYawThreshold;
+
+                            if (
+                                isCentered &&
+                                eyesOpen
+                            ) {
+                                neutralFrames++;
+                            } else {
+                                neutralFrames = 0;
+                            }
+
+                            if (
+                                neutralFrames >=
+                                LIVENESS_CONFIG
+                                    .neutralFrames
+                            ) {
+                                waitingForNeutral =
+                                    false;
+
+                                currentActionIndex++;
+
+                                resetActionCounters();
+                                showCurrentAction();
+                            }
+                        } else {
+                            const action =
+                                challenge.actions[
+                                currentActionIndex
+                                ];
+
+                            if (action === 'blink') {
+                                if (action === 'blink') {
+                                    const now = performance.now();
+
+                                    // Bandingkan EAR saat ini dengan baseline
+                                    // mata kiri dan kanan masing-masing.
+                                    const leftRatio =
+                                        metrics.leftEar / neutralLeftEar;
+
+                                    const rightRatio =
+                                        metrics.rightEar / neutralRightEar;
+
+                                    const averageEyeRatio =
+                                        (leftRatio + rightRatio) / 2;
+
+                                    // Kedua mata harus mengalami penurunan.
+                                    const bothEyesDropped = (
+                                        leftRatio <=
+                                        LIVENESS_CONFIG
+                                            .blinkEyeBalanceRatio &&
+                                        rightRatio <=
+                                        LIVENESS_CONFIG
+                                            .blinkEyeBalanceRatio
+                                    );
+
+                                    const eyesClosed = (
+                                        averageEyeRatio <=
+                                        LIVENESS_CONFIG
+                                            .blinkClosedRatio &&
+                                        bothEyesDropped
+                                    );
+
+                                    const eyesReopened = (
+                                        averageEyeRatio >=
+                                        LIVENESS_CONFIG
+                                            .blinkReopenRatio &&
+                                        leftRatio >= 0.84 &&
+                                        rightRatio >= 0.84
+                                    );
+
+                                    // Tahap pertama: menunggu mata tertutup.
+                                    if (!blinkWasClosed) {
+                                        if (eyesClosed) {
+                                            blinkClosedFrames++;
+
+                                            bestActionScore = Math.max(
+                                                bestActionScore,
+                                                1 - averageEyeRatio
+                                            );
+
+                                            if (
+                                                blinkClosedFrames >=
+                                                LIVENESS_CONFIG
+                                                    .blinkMinClosedSamples
+                                            ) {
+                                                blinkWasClosed = true;
+                                                blinkClosedAt = now;
+
+                                                elements.scanHudStatus
+                                                    .textContent =
+                                                    'MATA TERTUTUP — BUKA KEMBALI';
+                                            }
+                                        } else {
+                                            blinkClosedFrames = 0;
+                                        }
+
+                                        // Mata terlalu lama tertutup.
+                                    } else if (
+                                        now - blinkClosedAt >
+                                        LIVENESS_CONFIG.blinkMaxClosedMs
+                                    ) {
+                                        resetActionCounters();
+
+                                        setInstruction(
+                                            'Ulangi kedipan',
+                                            'Pejamkan kedua mata sebentar, ' +
+                                            'lalu buka kembali.'
+                                        );
+
+                                        // Tahap kedua: mata sudah terbuka kembali.
+                                    } else if (eyesReopened) {
+                                        completeAction(
+                                            action,
+
+                                            // Backend memerlukan skor minimal 0,15.
+                                            Math.max(
+                                                bestActionScore,
+                                                0.16
+                                            ),
+
+                                            descriptor
+                                        );
+                                    }
+                                }
+
+                            } else {
+                                const directionPassed =
+                                    action ===
+                                        'turn_left'
+                                        ? relativeYaw >=
+                                        LIVENESS_CONFIG
+                                            .turnThreshold
+                                        : relativeYaw <=
+                                        -LIVENESS_CONFIG
+                                            .turnThreshold;
+
+                                if (directionPassed) {
+                                    stableActionFrames++;
+
+                                    bestActionScore =
+                                        Math.max(
+                                            bestActionScore,
+                                            Math.abs(
+                                                relativeYaw
+                                            )
+                                        );
+                                } else {
+                                    stableActionFrames = 0;
+                                }
+
+                                if (
+                                    stableActionFrames >=
+                                    LIVENESS_CONFIG
+                                        .turnStableFrames
+                                ) {
+                                    completeAction(
+                                        action,
+                                        bestActionScore,
+                                        descriptor
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
-            } catch (err) {
-                console.error("Scan loop error:", err);
+            } catch (error) {
+                console.error(
+                    'Liveness scan loop error:',
+                    error
+                );
             }
-        } else if (!state.useRealFaceApi && state.simulationEnabled && frameCounter === 60) {
+        } else if (
+            !state.useRealFaceApi &&
+            state.simulationEnabled &&
+            frameCounter === 60
+        ) {
             state.isScanning = false;
+
             processSimulatedMatch();
             return;
         }
-        
-        if (state.useRealFaceApi && state.detectedFaceBox) {
-            const box = state.detectedFaceBox;
-            ctx.strokeStyle = 'var(--primary)';
+
+        if (
+            state.useRealFaceApi &&
+            state.detectedFaceBox
+        ) {
+            const box =
+                state.detectedFaceBox;
+
+            ctx.strokeStyle =
+                'var(--primary)';
+
             ctx.lineWidth = 2;
-            ctx.strokeRect(box.x, box.y, box.width, box.height);
-            ctx.fillStyle = 'var(--primary)';
-            ctx.font = '11px "Space Grotesk"';
-            ctx.fillText("LOCKED", box.x, box.y - 10);
+
+            ctx.strokeRect(
+                box.x,
+                box.y,
+                box.width,
+                box.height
+            );
+
+            ctx.fillStyle =
+                'var(--primary)';
+
+            ctx.font =
+                '11px "Space Grotesk"';
+
+            ctx.fillText(
+                'LIVE CHECK',
+                box.x,
+                Math.max(12, box.y - 10)
+            );
         }
-        
-        if (Math.random() < 0.04) {
-            playSound('scan');
-        }
-        
-        state.animationFrameId = requestAnimationFrame(draw);
+
+        state.animationFrameId =
+            requestAnimationFrame(draw);
     }
-    
-    state.animationFrameId = requestAnimationFrame(draw);
+
+    state.animationFrameId =
+        requestAnimationFrame(draw);
 }
 
 // POST Biometric descriptor vector to Flask for matching & logging
-async function processFaceMatch(liveDescriptor) {
+async function processFaceMatch(
+    liveDescriptor,
+    livenessProof
+) {
     const video = elements.scanVideo;
     const canvas = document.createElement('canvas');
     canvas.width = 320;
@@ -1161,23 +2253,40 @@ async function processFaceMatch(liveDescriptor) {
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const snapshotUrl = canvas.toDataURL('image/jpeg', 0.85);
-    
+
     stopCamera();
-    
+
     const inputEmpId = elements.scanEmployeeId.value.trim().toUpperCase();
     let attendanceType = 'check-in';
     elements.attendanceModes.forEach(radio => {
         if (radio.checked) attendanceType = radio.value;
     });
-    
+
     const payload = {
         employee_id: inputEmpId || null,
-        descriptor: Array.from(liveDescriptor),
-        snapshot_photo: snapshotUrl,
-        type: attendanceType,
-        simulate: false
+
+        descriptor:
+            Array.from(liveDescriptor),
+
+        snapshot_photo:
+            snapshotUrl,
+
+        type:
+            attendanceType,
+
+        simulate:
+            false,
+
+        liveness_challenge_id:
+            livenessProof?.challengeId || '',
+
+        liveness_steps:
+            livenessProof?.steps || [],
+
+        liveness_duration_ms:
+            livenessProof?.durationMs || 0
     };
-    
+
     try {
         const response = await apiFetch('/api/attendance', {
             method: 'POST',
@@ -1185,7 +2294,7 @@ async function processFaceMatch(liveDescriptor) {
             body: JSON.stringify(payload)
         });
         const result = await response.json();
-        
+
         if (response.ok) {
             executeAttendanceSuccess(result.employee, result.similarity, snapshotUrl, result.log);
         } else {
@@ -1212,22 +2321,22 @@ async function processSimulatedMatch() {
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const snapshotUrl = canvas.toDataURL('image/jpeg', 0.85);
-    
+
     stopCamera();
-    
+
     const inputEmpId = elements.scanEmployeeId.value.trim().toUpperCase();
     let attendanceType = 'check-in';
     elements.attendanceModes.forEach(radio => {
         if (radio.checked) attendanceType = radio.value;
     });
-    
+
     const payload = {
         employee_id: inputEmpId || null,
         snapshot_photo: snapshotUrl,
         type: attendanceType,
         simulate: true
     };
-    
+
     try {
         const response = await apiFetch('/api/attendance', {
             method: 'POST',
@@ -1235,7 +2344,7 @@ async function processSimulatedMatch() {
             body: JSON.stringify(payload)
         });
         const result = await response.json();
-        
+
         if (response.ok) {
             executeAttendanceSuccess(result.employee, result.similarity, snapshotUrl, result.log);
         } else {
@@ -1294,11 +2403,11 @@ function executeAttendanceSuccess(employee, similarity, snapshotUrl, log) {
 function failVerification(reason) {
     stopCamera();
     playSound('error');
-    
+
     elements.scanHudStatus.textContent = "VERIFIKASI GAGAL";
     elements.scanHudStatus.style.backgroundColor = "rgba(239, 68, 68, 0.3)";
     elements.scanHudStatus.style.color = "var(--danger)";
-    
+
     elements.scanResultCard.className = "scan-result-card error-match";
     elements.scanResultCard.innerHTML = `
         <div class="result-avatar">
@@ -1443,18 +2552,18 @@ function renderLogs(logsToRender = state.logs) {
 
 function filterLogs() {
     const query = elements.logSearch.value.trim().toLowerCase();
-    
+
     if (!query) {
         renderLogs();
         return;
     }
-    
-    const filtered = state.logs.filter(log => 
-        log.name.toLowerCase().includes(query) || 
+
+    const filtered = state.logs.filter(log =>
+        log.name.toLowerCase().includes(query) ||
         log.employee_id.toLowerCase().includes(query) ||
         log.role.toLowerCase().includes(query)
     );
-    
+
     renderLogs(filtered);
 }
 

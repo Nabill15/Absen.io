@@ -2705,3 +2705,119 @@ body.modal-open {
 @keyframes rotateHub {
     to { transform: rotate(360deg); }
 }
+
+
+/* =========================================
+   ACTIVE LIVENESS DETECTION
+   ========================================= */
+
+.liveness-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+
+    margin: 14px 0 16px;
+    padding: 13px 15px;
+
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+
+    background: var(--bg-subtle);
+}
+
+.liveness-copy {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-width: 0;
+}
+
+.liveness-copy > .material-icons-round {
+    flex: 0 0 auto;
+
+    color: var(--secondary);
+    font-size: 25px;
+}
+
+.liveness-copy div {
+    display: grid;
+    gap: 3px;
+}
+
+.liveness-copy strong {
+    color: var(--text-main);
+    font-size: 11px;
+}
+
+.liveness-copy small {
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1.45;
+}
+
+.liveness-progress {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+}
+
+.liveness-step {
+    width: 11px;
+    height: 11px;
+
+    border: 2px solid var(--border-color);
+    border-radius: 50%;
+
+    background: var(--bg-main);
+
+    transition:
+        transform 0.2s ease,
+        border-color 0.2s ease,
+        background 0.2s ease;
+}
+
+.liveness-step.active {
+    border-color: var(--secondary);
+    transform: scale(1.18);
+}
+
+.liveness-step.done {
+    border-color: var(--success);
+    background: var(--success);
+}
+
+.liveness-panel.is-active {
+    border-color: color-mix(
+        in srgb,
+        var(--secondary) 45%,
+        var(--border-color)
+    );
+}
+
+.liveness-panel.is-success {
+    border-color: color-mix(
+        in srgb,
+        var(--success) 55%,
+        var(--border-color)
+    );
+
+    background: var(--success-soft);
+}
+
+.liveness-panel.is-error {
+    border-color: color-mix(
+        in srgb,
+        var(--danger) 55%,
+        var(--border-color)
+    );
+
+    background: var(--danger-soft);
+}
+
+@media (max-width: 640px) {
+    .liveness-panel {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}

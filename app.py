@@ -92,6 +92,25 @@ SIMULATION_ENABLED = (
     and not IS_PRODUCTION
 )
 
+# Active liveness: server memberikan urutan gerakan acak yang wajib
+# diselesaikan sebelum presensi diterima.
+LIVENESS_TIMEOUT_SECONDS = max(
+    20,
+    min(90, int(os.getenv("LIVENESS_TIMEOUT_SECONDS", "45")))
+)
+
+LIVENESS_ACTIONS = (
+    "blink",
+    "turn_left",
+    "turn_right",
+)
+
+LIVENESS_MIN_SCORE = {
+    "blink": 0.15,
+    "turn_left": 0.10,
+    "turn_right": 0.10,
+}
+
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 if IS_PRODUCTION and not (ADMIN_PASSWORD_HASH or ADMIN_PASSWORD):
@@ -452,6 +471,114 @@ def json_body() -> dict:
     data = request.get_json(silent=True)
     return data if isinstance(data, dict) else {}
 
+def validate_liveness_proof(data: dict) -> tuple[bool, str]:
+    """
+    Memvalidasi dan menghapus tantangan liveness sekali pakai
+    yang tersimpan dalam session.
+    """
+
+    # pop() membuat challenge hanya bisa digunakan satu kali.
+    challenge = session.pop("liveness_challenge", None)
+    session.modified = True
+
+    if not isinstance(challenge, dict):
+        return False, (
+            "Tantangan keaslian tidak ditemukan. "
+            "Mulai ulang pemindaian."
+        )
+
+    challenge_id = str(data.get("liveness_challenge_id", ""))
+    expected_id = str(challenge.get("id", ""))
+
+    if (
+        not challenge_id
+        or not expected_id
+        or not hmac.compare_digest(challenge_id, expected_id)
+    ):
+        return False, (
+            "Tantangan keaslian tidak valid atau sudah digunakan."
+        )
+
+    try:
+        expires_at = int(challenge.get("expires_at", 0))
+    except (TypeError, ValueError):
+        expires_at = 0
+
+    if int(time.time()) > expires_at:
+        return False, (
+            "Waktu pemeriksaan keaslian telah habis. "
+            "Silakan ulangi."
+        )
+
+    expected_actions = challenge.get("actions")
+    steps = data.get("liveness_steps")
+
+    if not isinstance(expected_actions, list) or not isinstance(steps, list):
+        return False, "Bukti pemeriksaan keaslian tidak lengkap."
+
+    if len(steps) != len(expected_actions):
+        return False, (
+            "Semua gerakan pemeriksaan keaslian wajib diselesaikan."
+        )
+
+    supplied_actions: list[str] = []
+    previous_at = -1
+
+    for step in steps:
+        if not isinstance(step, dict):
+            return False, (
+                "Format bukti pemeriksaan keaslian tidak valid."
+            )
+
+        action = str(step.get("action", ""))
+        supplied_actions.append(action)
+
+        try:
+            score = float(step.get("score", 0))
+            at_ms = int(step.get("at_ms", -1))
+        except (TypeError, ValueError):
+            return False, (
+                "Nilai pemeriksaan keaslian tidak valid."
+            )
+
+        minimum_score = LIVENESS_MIN_SCORE.get(action, 1.0)
+
+        if not math.isfinite(score) or score < minimum_score:
+            return False, (
+                "Gerakan pemeriksaan keaslian tidak cukup jelas."
+            )
+
+        if (
+            at_ms <= previous_at
+            or at_ms < 0
+            or at_ms > LIVENESS_TIMEOUT_SECONDS * 1000
+        ):
+            return False, (
+                "Urutan waktu pemeriksaan keaslian tidak valid."
+            )
+
+        previous_at = at_ms
+
+    if supplied_actions != expected_actions:
+        return False, (
+            "Urutan gerakan pemeriksaan keaslian "
+            "tidak sesuai tantangan."
+        )
+
+    try:
+        duration_ms = int(data.get("liveness_duration_ms", 0))
+    except (TypeError, ValueError):
+        duration_ms = 0
+
+    if (
+        duration_ms < 500
+        or duration_ms > LIVENESS_TIMEOUT_SECONDS * 1000
+    ):
+        return False, (
+            "Durasi pemeriksaan keaslian tidak valid."
+        )
+
+    return True, ""
 
 @app.after_request
 def apply_security_headers(response):
@@ -625,6 +752,42 @@ def register_employee():
     app.logger.info("Karyawan terdaftar: %s", emp_id)
     return jsonify({"message": "Registrasi karyawan berhasil"}), 201
 
+@app.route("/api/liveness/challenge", methods=["GET", "POST"])
+def create_liveness_challenge():
+    # Endpoint ini hanya membuat tantangan acak sekali pakai.
+    # Validasi utama tetap dilakukan saat presensi dikirim.
+
+    enforce_rate_limit(
+        "liveness-challenge",
+        20,
+        60
+    )
+
+    actions = list(LIVENESS_ACTIONS)
+    secrets.SystemRandom().shuffle(actions)
+
+    challenge_id = secrets.token_urlsafe(24)
+
+    session["liveness_challenge"] = {
+        "id": challenge_id,
+        "actions": actions,
+        "expires_at": (
+            int(time.time()) +
+            LIVENESS_TIMEOUT_SECONDS
+        ),
+    }
+
+    session.modified = True
+
+    response = jsonify({
+        "challenge_id": challenge_id,
+        "actions": actions,
+        "expires_in": LIVENESS_TIMEOUT_SECONDS,
+    })
+
+    response.headers["Cache-Control"] = "no-store"
+
+    return response
 
 @app.post("/api/attendance")
 @csrf_required
@@ -646,6 +809,20 @@ def record_attendance():
     live_descriptor = None if simulate else validate_descriptor_vector(data.get("descriptor"))
     if not simulate and live_descriptor is None:
         return jsonify({"message": "Descriptor wajah tidak valid atau tidak terbaca"}), 400
+    
+    if not simulate:
+        liveness_ok, liveness_message = validate_liveness_proof(data)
+
+    if not liveness_ok:
+        app.logger.warning(
+            "Presensi ditolak oleh liveness dari IP %s: %s",
+            client_ip(),
+            liveness_message,
+        )
+
+        return jsonify({
+            "message": liveness_message
+        }), 403
 
     snapshot_photo = data.get("snapshot_photo")
     if not isinstance(snapshot_photo, str):
@@ -685,7 +862,7 @@ def record_attendance():
             if matched_employee is None or best_distance > FACE_MATCH_THRESHOLD:
                 app.logger.warning("Presensi ditolak: wajah tidak cocok dari IP %s", client_ip())
                 return jsonify({"message": "Wajah tidak dikenali atau tingkat kecocokan terlalu rendah"}), 400
-            method_label = "Face ID Verified (AI)"
+            method_label = "Face ID + Active Liveness"
 
         current = now_local()
         current_date_prefix = current.strftime("%Y-%m-%d") + "%"
