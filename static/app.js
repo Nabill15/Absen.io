@@ -2148,832 +2148,833 @@ async function startScanCamera() {
         );
 
     }
+}
 
-    function animateScanCanvas(challenge) {
-        const canvas = elements.scanCanvas;
-        const ctx = canvas.getContext('2d');
-        const video = elements.scanVideo;
-        const startedAt = performance.now();
+function animateScanCanvas(challenge) {
+    const canvas = elements.scanCanvas;
+    const ctx = canvas.getContext('2d');
+    const video = elements.scanVideo;
+    const startedAt = performance.now();
 
-        let frameCounter = 0;
-        let currentActionIndex = 0;
-        let calibrationFrames = 0;
-        let neutralFrames = 0;
-        let stableActionFrames = 0;
-        let lastCalibrationProgressAt = startedAt;
+    let frameCounter = 0;
+    let currentActionIndex = 0;
+    let calibrationFrames = 0;
+    let neutralFrames = 0;
+    let stableActionFrames = 0;
+    let lastCalibrationProgressAt = startedAt;
 
-        let blinkClosedFrames = 0;
-        let blinkWasClosed = false;
-        let blinkClosedAt = 0;
+    let blinkClosedFrames = 0;
+    let blinkWasClosed = false;
+    let blinkClosedAt = 0;
 
-        let waitingForNeutral = false;
-        let baselineDescriptor = null;
+    let waitingForNeutral = false;
+    let baselineDescriptor = null;
 
-        let neutralYaw = 0;
-        let neutralEar = 0;
-        let neutralLeftEar = 0;
-        let neutralRightEar = 0;
+    let neutralYaw = 0;
+    let neutralEar = 0;
+    let neutralLeftEar = 0;
+    let neutralRightEar = 0;
 
-        let yawAccumulator = 0;
-        let bestActionScore = 0;
+    let yawAccumulator = 0;
+    let bestActionScore = 0;
 
-        const earSamples = [];
-        const leftEarSamples = [];
-        const rightEarSamples = [];
+    const earSamples = [];
+    const leftEarSamples = [];
+    const rightEarSamples = [];
 
-        const proofSteps = [];
-        const verifiedDescriptors = [];
+    const proofSteps = [];
+    const verifiedDescriptors = [];
 
-        function setInstruction(title, instruction) {
+    function setInstruction(title, instruction) {
+        updateLivenessPanel(
+            challenge.actions,
+            currentActionIndex,
+            'active',
+            title,
+            instruction
+        );
+
+        elements.scanHudStatus.textContent =
+            title.toUpperCase();
+
+        elements.scanHudStatus.style.backgroundColor =
+            'rgba(0, 229, 255, 0.2)';
+
+        elements.scanHudStatus.style.color =
+            'var(--secondary)';
+    }
+
+    function resetActionCounters() {
+        stableActionFrames = 0;
+        blinkClosedFrames = 0;
+        blinkWasClosed = false;
+        blinkClosedAt = 0;
+        bestActionScore = 0;
+    }
+
+    function showCurrentAction() {
+        const action =
+            challenge.actions[currentActionIndex];
+
+        const label =
+            LIVENESS_LABELS[action];
+
+        setInstruction(
+            label.title,
+            label.instruction
+        );
+    }
+
+    function finishWithError(message) {
+        state.isScanning = false;
+
+        stopCamera();
+
+        updateLivenessPanel(
+            challenge.actions,
+            currentActionIndex,
+            'error',
+            'Pemeriksaan keaslian gagal',
+            message
+        );
+
+        failVerification(message);
+    }
+
+    function completeAction(
+        action,
+        score,
+        descriptor
+    ) {
+        proofSteps.push({
+            action,
+            score: Number(
+                Math.max(0, score).toFixed(4)
+            ),
+            at_ms: Math.round(
+                performance.now() - startedAt
+            )
+        });
+
+        verifiedDescriptors.push(
+            Float32Array.from(descriptor)
+        );
+
+        playSound('success');
+
+        bestActionScore = 0;
+
+        const isLastAction =
+            currentActionIndex >=
+            challenge.actions.length - 1;
+
+        if (isLastAction) {
+            const finalDescriptor =
+                averageDescriptors(
+                    verifiedDescriptors
+                );
+
+            if (!finalDescriptor) {
+                finishWithError(
+                    'Descriptor wajah tidak dapat dibentuk setelah pemeriksaan.'
+                );
+
+                return;
+            }
+
+            state.isScanning = false;
+
+            state.livenessProof = {
+                challengeId:
+                    challenge.challenge_id,
+
+                steps:
+                    proofSteps,
+
+                durationMs:
+                    Math.round(
+                        performance.now() -
+                        startedAt
+                    )
+            };
+
             updateLivenessPanel(
                 challenge.actions,
-                currentActionIndex,
-                'active',
-                title,
-                instruction
+                challenge.actions.length,
+                'success',
+                'Wajah hidup terverifikasi',
+                'Seluruh gerakan berhasil. Memverifikasi identitas...'
             );
 
             elements.scanHudStatus.textContent =
-                title.toUpperCase();
+                'LIVENESS BERHASIL';
 
-            elements.scanHudStatus.style.backgroundColor =
-                'rgba(0, 229, 255, 0.2)';
-
-            elements.scanHudStatus.style.color =
-                'var(--secondary)';
-        }
-
-        function resetActionCounters() {
-            stableActionFrames = 0;
-            blinkClosedFrames = 0;
-            blinkWasClosed = false;
-            blinkClosedAt = 0;
-            bestActionScore = 0;
-        }
-
-        function showCurrentAction() {
-            const action =
-                challenge.actions[currentActionIndex];
-
-            const label =
-                LIVENESS_LABELS[action];
-
-            setInstruction(
-                label.title,
-                label.instruction
-            );
-        }
-
-        function finishWithError(message) {
-            state.isScanning = false;
-
-            stopCamera();
-
-            updateLivenessPanel(
-                challenge.actions,
-                currentActionIndex,
-                'error',
-                'Pemeriksaan keaslian gagal',
-                message
+            processFaceMatch(
+                finalDescriptor,
+                state.livenessProof
             );
 
-            failVerification(message);
+            return;
         }
 
-        function completeAction(
-            action,
-            score,
-            descriptor
+        waitingForNeutral = true;
+        neutralFrames = 0;
+
+        resetActionCounters();
+
+        setInstruction(
+            'Kembali hadap depan',
+            'Hadap lurus kembali sebelum gerakan berikutnya.'
+        );
+    }
+
+    async function draw() {
+        if (
+            !state.mediaStream ||
+            !state.isScanning
         ) {
-            proofSteps.push({
-                action,
-                score: Number(
-                    Math.max(0, score).toFixed(4)
-                ),
-                at_ms: Math.round(
-                    performance.now() - startedAt
-                )
-            });
-
-            verifiedDescriptors.push(
-                Float32Array.from(descriptor)
-            );
-
-            playSound('success');
-
-            bestActionScore = 0;
-
-            const isLastAction =
-                currentActionIndex >=
-                challenge.actions.length - 1;
-
-            if (isLastAction) {
-                const finalDescriptor =
-                    averageDescriptors(
-                        verifiedDescriptors
-                    );
-
-                if (!finalDescriptor) {
-                    finishWithError(
-                        'Descriptor wajah tidak dapat dibentuk setelah pemeriksaan.'
-                    );
-
-                    return;
-                }
-
-                state.isScanning = false;
-
-                state.livenessProof = {
-                    challengeId:
-                        challenge.challenge_id,
-
-                    steps:
-                        proofSteps,
-
-                    durationMs:
-                        Math.round(
-                            performance.now() -
-                            startedAt
-                        )
-                };
-
-                updateLivenessPanel(
-                    challenge.actions,
-                    challenge.actions.length,
-                    'success',
-                    'Wajah hidup terverifikasi',
-                    'Seluruh gerakan berhasil. Memverifikasi identitas...'
-                );
-
-                elements.scanHudStatus.textContent =
-                    'LIVENESS BERHASIL';
-
-                processFaceMatch(
-                    finalDescriptor,
-                    state.livenessProof
-                );
-
-                return;
-            }
-
-            waitingForNeutral = true;
-            neutralFrames = 0;
-
-            resetActionCounters();
-
-            setInstruction(
-                'Kembali hadap depan',
-                'Hadap lurus kembali sebelum gerakan berikutnya.'
-            );
+            return;
         }
 
-        async function draw() {
-            if (
-                !state.mediaStream ||
-                !state.isScanning
-            ) {
-                return;
-            }
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
 
-            ctx.clearRect(
-                0,
-                0,
-                canvas.width,
-                canvas.height
+        frameCounter++;
+
+        const elapsedMs =
+            performance.now() - startedAt;
+
+        const challengeLimit =
+            Number(
+                challenge.expires_in || 45
+            ) * 1000;
+
+        if (
+            elapsedMs >
+            challengeLimit - 750
+        ) {
+            finishWithError(
+                'Waktu tantangan habis. Silakan mulai pemindaian kembali.'
             );
 
-            frameCounter++;
+            return;
+        }
 
-            const elapsedMs =
-                performance.now() - startedAt;
+        const faceX = canvas.width / 2;
+        const faceY = canvas.height / 2;
+        const radius = 110;
 
-            const challengeLimit =
-                Number(
-                    challenge.expires_in || 45
-                ) * 1000;
+        ctx.strokeStyle =
+            'rgba(0, 229, 255, 0.3)';
 
-            if (
-                elapsedMs >
-                challengeLimit - 750
-            ) {
-                finishWithError(
-                    'Waktu tantangan habis. Silakan mulai pemindaian kembali.'
-                );
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 8]);
 
-                return;
-            }
+        ctx.beginPath();
+        ctx.arc(
+            faceX,
+            faceY,
+            radius,
+            0,
+            Math.PI * 2
+        );
+        ctx.stroke();
 
-            const faceX = canvas.width / 2;
-            const faceY = canvas.height / 2;
-            const radius = 110;
+        ctx.setLineDash([]);
 
-            ctx.strokeStyle =
-                'rgba(0, 229, 255, 0.3)';
+        const angle =
+            Date.now() * 0.002;
 
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 8]);
+        ctx.strokeStyle =
+            'var(--secondary)';
 
-            ctx.beginPath();
-            ctx.arc(
-                faceX,
-                faceY,
-                radius,
-                0,
-                Math.PI * 2
-            );
-            ctx.stroke();
+        ctx.lineWidth = 3;
 
-            ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(
+            faceX,
+            faceY,
+            radius + 5,
+            angle,
+            angle + Math.PI / 4
+        );
+        ctx.stroke();
 
-            const angle =
-                Date.now() * 0.002;
+        ctx.beginPath();
+        ctx.arc(
+            faceX,
+            faceY,
+            radius + 5,
+            angle + Math.PI,
+            angle + Math.PI + Math.PI / 4
+        );
+        ctx.stroke();
 
-            ctx.strokeStyle =
-                'var(--secondary)';
+        if (
+            state.useRealFaceApi &&
+            frameCounter %
+            LIVENESS_CONFIG.detectionFrameInterval ===
+            0
+        ) {
+            try {
+                const detections =
+                    await faceapi
+                        .detectAllFaces(
+                            video,
+                            new faceapi.TinyFaceDetectorOptions({
+                                inputSize: 224,
+                                scoreThreshold:
+                                    LIVENESS_CONFIG
+                                        .faceDetectionScoreThreshold
+                            })
+                        )
+                        .withFaceLandmarks()
+                        .withFaceDescriptors();
 
-            ctx.lineWidth = 3;
+                if (detections.length !== 1) {
+                    state.activeDescriptor = null;
+                    state.detectedFaceBox = null;
 
-            ctx.beginPath();
-            ctx.arc(
-                faceX,
-                faceY,
-                radius + 5,
-                angle,
-                angle + Math.PI / 4
-            );
-            ctx.stroke();
+                    resetActionCounters();
 
-            ctx.beginPath();
-            ctx.arc(
-                faceX,
-                faceY,
-                radius + 5,
-                angle + Math.PI,
-                angle + Math.PI + Math.PI / 4
-            );
-            ctx.stroke();
+                    elements.scanHudStatus.textContent =
+                        detections.length > 1
+                            ? 'HANYA SATU WAJAH'
+                            : 'MENCARI WAJAH...';
 
-            if (
-                state.useRealFaceApi &&
-                frameCounter %
-                LIVENESS_CONFIG.detectionFrameInterval ===
-                0
-            ) {
-                try {
-                    const detections =
-                        await faceapi
-                            .detectAllFaces(
-                                video,
-                                new faceapi.TinyFaceDetectorOptions({
-                                    inputSize: 224,
-                                    scoreThreshold:
-                                        LIVENESS_CONFIG
-                                            .faceDetectionScoreThreshold
-                                })
-                            )
-                            .withFaceLandmarks()
-                            .withFaceDescriptors();
+                    elements.scanHudStatus
+                        .style.backgroundColor =
+                        'rgba(239, 68, 68, 0.15)';
 
-                    if (detections.length !== 1) {
-                        state.activeDescriptor = null;
-                        state.detectedFaceBox = null;
+                    elements.scanHudStatus
+                        .style.color =
+                        'var(--danger)';
 
-                        resetActionCounters();
+                    if (detections.length > 1) {
+                        updateLivenessPanel(
+                            challenge.actions,
+                            currentActionIndex,
+                            'error',
+                            'Terdeteksi lebih dari satu wajah',
+                            'Pastikan hanya satu orang berada di depan kamera.'
+                        );
+                    }
+                } else {
+                    const detection =
+                        detections[0];
+
+                    const descriptor =
+                        detection.descriptor;
+
+                    const box =
+                        detection.detection.box;
+
+                    const metrics =
+                        getLivenessMetrics(
+                            detection.landmarks
+                        );
+
+                    state.activeDescriptor =
+                        descriptor;
+
+                    state.detectedFaceBox =
+                        box;
+
+                    const positionStatus =
+                        getFacePositionStatus(box, canvas);
+
+                    if (!areLivenessMetricsValid(metrics)) {
+                        elements.scanHudStatus.textContent =
+                            'LANDMARK WAJAH BELUM STABIL';
+
+                        updateLivenessPanel(
+                            challenge.actions,
+                            currentActionIndex,
+                            'active',
+                            'Perbaiki pencahayaan',
+                            'Pastikan mata dan seluruh wajah terlihat jelas.'
+                        );
+
+                    } else if (!positionStatus.valid) {
+                        elements.scanHudStatus.textContent =
+                            'ATUR POSISI WAJAH';
+
+                        updateLivenessPanel(
+                            challenge.actions,
+                            currentActionIndex,
+                            'active',
+                            'Atur posisi wajah',
+                            positionStatus.message
+                        );
+
+                    } else if (
+                        calibrationFrames <
+                        LIVENESS_CONFIG.calibrationFrames
+                    ) {
+                        // Menyimpan posisi normal kepala.
+                        yawAccumulator += metrics.rawYaw;
+
+                        // Menyimpan nilai mata terbuka.
+                        earSamples.push(metrics.ear);
+                        leftEarSamples.push(metrics.leftEar);
+                        rightEarSamples.push(metrics.rightEar);
+
+                        // Menambah progres kalibrasi.
+                        calibrationFrames++;
+
+                        lastCalibrationProgressAt =
+                            performance.now();
+
+                        // Menyimpan wajah awal untuk memastikan
+                        // orang tidak berubah saat pemeriksaan.
+                        baselineDescriptor =
+                            baselineDescriptor ||
+                            Float32Array.from(descriptor);
 
                         elements.scanHudStatus.textContent =
-                            detections.length > 1
-                                ? 'HANYA SATU WAJAH'
-                                : 'MENCARI WAJAH...';
+                            `KALIBRASI ${calibrationFrames}/` +
+                            `${LIVENESS_CONFIG.calibrationFrames}`;
 
-                        elements.scanHudStatus
-                            .style.backgroundColor =
-                            'rgba(239, 68, 68, 0.15)';
+                        updateLivenessPanel(
+                            challenge.actions,
+                            currentActionIndex,
+                            'active',
 
-                        elements.scanHudStatus
-                            .style.color =
-                            'var(--danger)';
+                            `Kalibrasi wajah ${calibrationFrames}/` +
+                            `${LIVENESS_CONFIG.calibrationFrames}`,
 
-                        if (detections.length > 1) {
-                            updateLivenessPanel(
-                                challenge.actions,
-                                currentActionIndex,
-                                'error',
-                                'Terdeteksi lebih dari satu wajah',
-                                'Pastikan hanya satu orang berada di depan kamera.'
-                            );
-                        }
-                    } else {
-                        const detection =
-                            detections[0];
+                            'Hadap lurus dan buka kedua mata sampai selesai.'
+                        );
 
-                        const descriptor =
-                            detection.descriptor;
-
-                        const box =
-                            detection.detection.box;
-
-                        const metrics =
-                            getLivenessMetrics(
-                                detection.landmarks
-                            );
-
-                        state.activeDescriptor =
-                            descriptor;
-
-                        state.detectedFaceBox =
-                            box;
-
-                        const positionStatus =
-                            getFacePositionStatus(box, canvas);
-
-                        if (!areLivenessMetricsValid(metrics)) {
-                            elements.scanHudStatus.textContent =
-                                'LANDMARK WAJAH BELUM STABIL';
-
-                            updateLivenessPanel(
-                                challenge.actions,
-                                currentActionIndex,
-                                'active',
-                                'Perbaiki pencahayaan',
-                                'Pastikan mata dan seluruh wajah terlihat jelas.'
-                            );
-
-                        } else if (!positionStatus.valid) {
-                            elements.scanHudStatus.textContent =
-                                'ATUR POSISI WAJAH';
-
-                            updateLivenessPanel(
-                                challenge.actions,
-                                currentActionIndex,
-                                'active',
-                                'Atur posisi wajah',
-                                positionStatus.message
-                            );
-
-                        } else if (
-                            calibrationFrames <
+                        // Ketika semua frame kalibrasi terkumpul.
+                        if (
+                            calibrationFrames ===
                             LIVENESS_CONFIG.calibrationFrames
                         ) {
-                            // Menyimpan posisi normal kepala.
-                            yawAccumulator += metrics.rawYaw;
+                            neutralYaw =
+                                yawAccumulator / calibrationFrames;
 
-                            // Menyimpan nilai mata terbuka.
-                            earSamples.push(metrics.ear);
-                            leftEarSamples.push(metrics.leftEar);
-                            rightEarSamples.push(metrics.rightEar);
-
-                            // Menambah progres kalibrasi.
-                            calibrationFrames++;
-
-                            lastCalibrationProgressAt =
-                                performance.now();
-
-                            // Menyimpan wajah awal untuk memastikan
-                            // orang tidak berubah saat pemeriksaan.
-                            baselineDescriptor =
-                                baselineDescriptor ||
-                                Float32Array.from(descriptor);
-
-                            elements.scanHudStatus.textContent =
-                                `KALIBRASI ${calibrationFrames}/` +
-                                `${LIVENESS_CONFIG.calibrationFrames}`;
-
-                            updateLivenessPanel(
-                                challenge.actions,
-                                currentActionIndex,
-                                'active',
-
-                                `Kalibrasi wajah ${calibrationFrames}/` +
-                                `${LIVENESS_CONFIG.calibrationFrames}`,
-
-                                'Hadap lurus dan buka kedua mata sampai selesai.'
+                            neutralEar = percentile(
+                                earSamples,
+                                0.75
                             );
 
-                            // Ketika semua frame kalibrasi terkumpul.
+                            neutralLeftEar = percentile(
+                                leftEarSamples,
+                                0.75
+                            );
+
+                            neutralRightEar = percentile(
+                                rightEarSamples,
+                                0.75
+                            );
+
+                            // Memastikan landmark mata terbaca.
                             if (
-                                calibrationFrames ===
-                                LIVENESS_CONFIG.calibrationFrames
+                                neutralEar <= 0.12 ||
+                                neutralLeftEar <= 0.10 ||
+                                neutralRightEar <= 0.10
                             ) {
-                                neutralYaw =
-                                    yawAccumulator / calibrationFrames;
-
-                                neutralEar = percentile(
-                                    earSamples,
-                                    0.75
+                                finishWithError(
+                                    'Mata tidak terbaca dengan baik. ' +
+                                    'Perbaiki pencahayaan dan ulangi.'
                                 );
 
-                                neutralLeftEar = percentile(
-                                    leftEarSamples,
-                                    0.75
-                                );
-
-                                neutralRightEar = percentile(
-                                    rightEarSamples,
-                                    0.75
-                                );
-
-                                // Memastikan landmark mata terbaca.
-                                if (
-                                    neutralEar <= 0.12 ||
-                                    neutralLeftEar <= 0.10 ||
-                                    neutralRightEar <= 0.10
-                                ) {
-                                    finishWithError(
-                                        'Mata tidak terbaca dengan baik. ' +
-                                        'Perbaiki pencahayaan dan ulangi.'
-                                    );
-
-                                    return;
-                                }
-
-                                // Kalibrasi selesai, lanjut ke gerakan acak.
-                                showCurrentAction();
+                                return;
                             }
 
-                        } else if (
-                            descriptorDistance(
-                                baselineDescriptor,
-                                descriptor
-                            ) >
-                            LIVENESS_CONFIG.identityThreshold
-                        ) {
-                            finishWithError(
-                                'Wajah berubah selama pemeriksaan. ' +
-                                'Pastikan orang yang sama tetap di depan kamera.'
-                            );
+                            // Kalibrasi selesai, lanjut ke gerakan acak.
+                            showCurrentAction();
+                        }
 
-                            return;
+                    } else if (
+                        descriptorDistance(
+                            baselineDescriptor,
+                            descriptor
+                        ) >
+                        LIVENESS_CONFIG.identityThreshold
+                    ) {
+                        finishWithError(
+                            'Wajah berubah selama pemeriksaan. ' +
+                            'Pastikan orang yang sama tetap di depan kamera.'
+                        );
 
-                        } else {
-                            const relativeYaw =
-                                metrics.rawYaw -
-                                neutralYaw;
+                        return;
 
-                            const eyesOpen =
-                                metrics.ear >=
-                                neutralEar * 0.86;
+                    } else {
+                        const relativeYaw =
+                            metrics.rawYaw -
+                            neutralYaw;
 
-                            if (waitingForNeutral) {
-                                const isCentered =
-                                    Math.abs(
-                                        relativeYaw
-                                    ) <=
-                                    LIVENESS_CONFIG
-                                        .centeredYawThreshold;
+                        const eyesOpen =
+                            metrics.ear >=
+                            neutralEar * 0.86;
 
-                                if (
-                                    isCentered &&
-                                    eyesOpen
-                                ) {
-                                    neutralFrames++;
-                                } else {
-                                    neutralFrames = 0;
-                                }
+                        if (waitingForNeutral) {
+                            const isCentered =
+                                Math.abs(
+                                    relativeYaw
+                                ) <=
+                                LIVENESS_CONFIG
+                                    .centeredYawThreshold;
 
-                                if (
-                                    neutralFrames >=
-                                    LIVENESS_CONFIG
-                                        .neutralFrames
-                                ) {
-                                    waitingForNeutral =
-                                        false;
-
-                                    currentActionIndex++;
-
-                                    resetActionCounters();
-                                    showCurrentAction();
-                                }
+                            if (
+                                isCentered &&
+                                eyesOpen
+                            ) {
+                                neutralFrames++;
                             } else {
-                                const action =
-                                    challenge.actions[
-                                    currentActionIndex
-                                    ];
+                                neutralFrames = 0;
+                            }
+
+                            if (
+                                neutralFrames >=
+                                LIVENESS_CONFIG
+                                    .neutralFrames
+                            ) {
+                                waitingForNeutral =
+                                    false;
+
+                                currentActionIndex++;
+
+                                resetActionCounters();
+                                showCurrentAction();
+                            }
+                        } else {
+                            const action =
+                                challenge.actions[
+                                currentActionIndex
+                                ];
 
 
-                                if (action === 'blink') {
-                                    const now = performance.now();
+                            if (action === 'blink') {
+                                const now = performance.now();
 
-                                    // Bandingkan EAR saat ini dengan baseline
-                                    // mata kiri dan kanan masing-masing.
-                                    const leftRatio =
-                                        metrics.leftEar / neutralLeftEar;
+                                // Bandingkan EAR saat ini dengan baseline
+                                // mata kiri dan kanan masing-masing.
+                                const leftRatio =
+                                    metrics.leftEar / neutralLeftEar;
 
-                                    const rightRatio =
-                                        metrics.rightEar / neutralRightEar;
+                                const rightRatio =
+                                    metrics.rightEar / neutralRightEar;
 
-                                    const averageEyeRatio =
-                                        (leftRatio + rightRatio) / 2;
+                                const averageEyeRatio =
+                                    (leftRatio + rightRatio) / 2;
 
-                                    // Kedua mata harus mengalami penurunan.
-                                    const bothEyesDropped = (
-                                        leftRatio <=
-                                        LIVENESS_CONFIG
-                                            .blinkEyeBalanceRatio &&
-                                        rightRatio <=
-                                        LIVENESS_CONFIG
-                                            .blinkEyeBalanceRatio
-                                    );
+                                // Kedua mata harus mengalami penurunan.
+                                const bothEyesDropped = (
+                                    leftRatio <=
+                                    LIVENESS_CONFIG
+                                        .blinkEyeBalanceRatio &&
+                                    rightRatio <=
+                                    LIVENESS_CONFIG
+                                        .blinkEyeBalanceRatio
+                                );
 
-                                    const eyesClosed = (
-                                        averageEyeRatio <=
-                                        LIVENESS_CONFIG
-                                            .blinkClosedRatio &&
-                                        bothEyesDropped
-                                    );
+                                const eyesClosed = (
+                                    averageEyeRatio <=
+                                    LIVENESS_CONFIG
+                                        .blinkClosedRatio &&
+                                    bothEyesDropped
+                                );
 
-                                    const eyesReopened = (
-                                        averageEyeRatio >=
-                                        LIVENESS_CONFIG
-                                            .blinkReopenRatio &&
-                                        leftRatio >= 0.84 &&
-                                        rightRatio >= 0.84
-                                    );
+                                const eyesReopened = (
+                                    averageEyeRatio >=
+                                    LIVENESS_CONFIG
+                                        .blinkReopenRatio &&
+                                    leftRatio >= 0.84 &&
+                                    rightRatio >= 0.84
+                                );
 
-                                    // Tahap pertama: menunggu mata tertutup.
-                                    if (!blinkWasClosed) {
-                                        if (eyesClosed) {
-                                            blinkClosedFrames++;
+                                // Tahap pertama: menunggu mata tertutup.
+                                if (!blinkWasClosed) {
+                                    if (eyesClosed) {
+                                        blinkClosedFrames++;
 
-                                            bestActionScore = Math.max(
-                                                bestActionScore,
-                                                1 - averageEyeRatio
-                                            );
-
-                                            if (
-                                                blinkClosedFrames >=
-                                                LIVENESS_CONFIG
-                                                    .blinkMinClosedSamples
-                                            ) {
-                                                blinkWasClosed = true;
-                                                blinkClosedAt = now;
-
-                                                elements.scanHudStatus
-                                                    .textContent =
-                                                    'MATA TERTUTUP — BUKA KEMBALI';
-                                            }
-                                        } else {
-                                            blinkClosedFrames = 0;
-                                        }
-
-                                        // Mata terlalu lama tertutup.
-                                    } else if (
-                                        now - blinkClosedAt >
-                                        LIVENESS_CONFIG.blinkMaxClosedMs
-                                    ) {
-                                        resetActionCounters();
-
-                                        setInstruction(
-                                            'Ulangi kedipan',
-                                            'Pejamkan kedua mata sebentar, ' +
-                                            'lalu buka kembali.'
-                                        );
-
-                                        // Tahap kedua: mata sudah terbuka kembali.
-                                    } else if (eyesReopened) {
-                                        completeAction(
-                                            action,
-
-                                            // Backend memerlukan skor minimal 0,15.
-                                            Math.max(
-                                                bestActionScore,
-                                                0.16
-                                            ),
-
-                                            descriptor
-                                        );
-                                    }
-
-
-                                } else {
-                                    const directionPassed =
-                                        action ===
-                                            'turn_left'
-                                            ? relativeYaw >=
-                                            LIVENESS_CONFIG
-                                                .turnThreshold
-                                            : relativeYaw <=
-                                            -LIVENESS_CONFIG
-                                                .turnThreshold;
-
-                                    if (directionPassed) {
-                                        stableActionFrames++;
-
-                                        bestActionScore =
-                                            Math.max(
-                                                bestActionScore,
-                                                Math.abs(
-                                                    relativeYaw
-                                                )
-                                            );
-                                    } else {
-                                        stableActionFrames = 0;
-                                    }
-
-                                    if (
-                                        stableActionFrames >=
-                                        LIVENESS_CONFIG
-                                            .turnStableFrames
-                                    ) {
-                                        completeAction(
-                                            action,
+                                        bestActionScore = Math.max(
                                             bestActionScore,
-                                            descriptor
+                                            1 - averageEyeRatio
                                         );
+
+                                        if (
+                                            blinkClosedFrames >=
+                                            LIVENESS_CONFIG
+                                                .blinkMinClosedSamples
+                                        ) {
+                                            blinkWasClosed = true;
+                                            blinkClosedAt = now;
+
+                                            elements.scanHudStatus
+                                                .textContent =
+                                                'MATA TERTUTUP — BUKA KEMBALI';
+                                        }
+                                    } else {
+                                        blinkClosedFrames = 0;
                                     }
+
+                                    // Mata terlalu lama tertutup.
+                                } else if (
+                                    now - blinkClosedAt >
+                                    LIVENESS_CONFIG.blinkMaxClosedMs
+                                ) {
+                                    resetActionCounters();
+
+                                    setInstruction(
+                                        'Ulangi kedipan',
+                                        'Pejamkan kedua mata sebentar, ' +
+                                        'lalu buka kembali.'
+                                    );
+
+                                    // Tahap kedua: mata sudah terbuka kembali.
+                                } else if (eyesReopened) {
+                                    completeAction(
+                                        action,
+
+                                        // Backend memerlukan skor minimal 0,15.
+                                        Math.max(
+                                            bestActionScore,
+                                            0.16
+                                        ),
+
+                                        descriptor
+                                    );
+                                }
+
+
+                            } else {
+                                const directionPassed =
+                                    action ===
+                                        'turn_left'
+                                        ? relativeYaw >=
+                                        LIVENESS_CONFIG
+                                            .turnThreshold
+                                        : relativeYaw <=
+                                        -LIVENESS_CONFIG
+                                            .turnThreshold;
+
+                                if (directionPassed) {
+                                    stableActionFrames++;
+
+                                    bestActionScore =
+                                        Math.max(
+                                            bestActionScore,
+                                            Math.abs(
+                                                relativeYaw
+                                            )
+                                        );
+                                } else {
+                                    stableActionFrames = 0;
+                                }
+
+                                if (
+                                    stableActionFrames >=
+                                    LIVENESS_CONFIG
+                                        .turnStableFrames
+                                ) {
+                                    completeAction(
+                                        action,
+                                        bestActionScore,
+                                        descriptor
+                                    );
                                 }
                             }
                         }
                     }
-                } catch (error) {
-                    console.error(
-                        'Liveness scan loop error:',
-                        error
-                    );
                 }
-            } else if (
-                !state.useRealFaceApi &&
-                state.simulationEnabled &&
-                frameCounter === 60
-            ) {
-                state.isScanning = false;
-
-                processSimulatedMatch();
-                return;
-            }
-
-            if (
-                state.useRealFaceApi &&
-                state.detectedFaceBox
-            ) {
-                const box =
-                    state.detectedFaceBox;
-
-                ctx.strokeStyle =
-                    'var(--primary)';
-
-                ctx.lineWidth = 2;
-
-                ctx.strokeRect(
-                    box.x,
-                    box.y,
-                    box.width,
-                    box.height
-                );
-
-                ctx.fillStyle =
-                    'var(--primary)';
-
-                ctx.font =
-                    '11px "Space Grotesk"';
-
-                ctx.fillText(
-                    'LIVE CHECK',
-                    box.x,
-                    Math.max(12, box.y - 10)
+            } catch (error) {
+                console.error(
+                    'Liveness scan loop error:',
+                    error
                 );
             }
+        } else if (
+            !state.useRealFaceApi &&
+            state.simulationEnabled &&
+            frameCounter === 60
+        ) {
+            state.isScanning = false;
 
-            state.animationFrameId =
-                requestAnimationFrame(draw);
+            processSimulatedMatch();
+            return;
+        }
+
+        if (
+            state.useRealFaceApi &&
+            state.detectedFaceBox
+        ) {
+            const box =
+                state.detectedFaceBox;
+
+            ctx.strokeStyle =
+                'var(--primary)';
+
+            ctx.lineWidth = 2;
+
+            ctx.strokeRect(
+                box.x,
+                box.y,
+                box.width,
+                box.height
+            );
+
+            ctx.fillStyle =
+                'var(--primary)';
+
+            ctx.font =
+                '11px "Space Grotesk"';
+
+            ctx.fillText(
+                'LIVE CHECK',
+                box.x,
+                Math.max(12, box.y - 10)
+            );
         }
 
         state.animationFrameId =
             requestAnimationFrame(draw);
     }
 
-    // POST Biometric descriptor vector to Flask for matching & logging
-    async function processFaceMatch(
-        liveDescriptor,
-        livenessProof
-    ) {
-        const video = elements.scanVideo;
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 240;
-        const ctx = canvas.getContext('2d');
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const snapshotUrl = canvas.toDataURL('image/jpeg', 0.85);
+    state.animationFrameId =
+        requestAnimationFrame(draw);
+}
 
-        stopCamera();
+// POST Biometric descriptor vector to Flask for matching & logging
+async function processFaceMatch(
+    liveDescriptor,
+    livenessProof
+) {
+    const video = elements.scanVideo;
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d');
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const snapshotUrl = canvas.toDataURL('image/jpeg', 0.85);
 
-        const inputEmpId = elements.scanEmployeeId.value.trim().toUpperCase();
-        let attendanceType = 'check-in';
-        elements.attendanceModes.forEach(radio => {
-            if (radio.checked) attendanceType = radio.value;
+    stopCamera();
+
+    const inputEmpId = elements.scanEmployeeId.value.trim().toUpperCase();
+    let attendanceType = 'check-in';
+    elements.attendanceModes.forEach(radio => {
+        if (radio.checked) attendanceType = radio.value;
+    });
+
+    const payload = {
+        employee_id: inputEmpId || null,
+
+        descriptor:
+            Array.from(liveDescriptor),
+
+        snapshot_photo:
+            snapshotUrl,
+
+        type:
+            attendanceType,
+
+        simulate:
+            false,
+
+        liveness_challenge_id:
+            livenessProof?.challengeId || '',
+
+        liveness_steps:
+            livenessProof?.steps || [],
+
+        liveness_duration_ms:
+            livenessProof?.durationMs || 0
+    };
+
+    try {
+        const response = await apiFetch('/api/attendance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+        const result = await response.json();
 
-        const payload = {
-            employee_id: inputEmpId || null,
-
-            descriptor:
-                Array.from(liveDescriptor),
-
-            snapshot_photo:
-                snapshotUrl,
-
-            type:
-                attendanceType,
-
-            simulate:
-                false,
-
-            liveness_challenge_id:
-                livenessProof?.challengeId || '',
-
-            liveness_steps:
-                livenessProof?.steps || [],
-
-            liveness_duration_ms:
-                livenessProof?.durationMs || 0
-        };
-
-        try {
-            const response = await apiFetch('/api/attendance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
-
-            if (response.ok) {
-                executeAttendanceSuccess(result.employee, result.similarity, snapshotUrl, result.log);
-            } else {
-                failVerification(result.message);
-            }
-        } catch (err) {
-            console.error("Attendance API network error:", err);
-            failVerification("Gagal memverifikasi: Terjadi kesalahan jaringan dengan server.");
+        if (response.ok) {
+            executeAttendanceSuccess(result.employee, result.similarity, snapshotUrl, result.log);
+        } else {
+            failVerification(result.message);
         }
+    } catch (err) {
+        console.error("Attendance API network error:", err);
+        failVerification("Gagal memverifikasi: Terjadi kesalahan jaringan dengan server.");
     }
+}
 
-    // Send mock/simulated scan trigger to Flask (so offline runs still save in SQLite database)
-    async function processSimulatedMatch() {
-        if (!state.simulationEnabled) {
-            failVerification('Mode simulasi tidak diizinkan oleh server.');
-            return;
-        }
-        const video = elements.scanVideo;
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 240;
-        const ctx = canvas.getContext('2d');
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const snapshotUrl = canvas.toDataURL('image/jpeg', 0.85);
+// Send mock/simulated scan trigger to Flask (so offline runs still save in SQLite database)
+async function processSimulatedMatch() {
+    if (!state.simulationEnabled) {
+        failVerification('Mode simulasi tidak diizinkan oleh server.');
+        return;
+    }
+    const video = elements.scanVideo;
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d');
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const snapshotUrl = canvas.toDataURL('image/jpeg', 0.85);
 
-        stopCamera();
+    stopCamera();
 
-        const inputEmpId = elements.scanEmployeeId.value.trim().toUpperCase();
-        let attendanceType = 'check-in';
-        elements.attendanceModes.forEach(radio => {
-            if (radio.checked) attendanceType = radio.value;
+    const inputEmpId = elements.scanEmployeeId.value.trim().toUpperCase();
+    let attendanceType = 'check-in';
+    elements.attendanceModes.forEach(radio => {
+        if (radio.checked) attendanceType = radio.value;
+    });
+
+    const payload = {
+        employee_id: inputEmpId || null,
+        snapshot_photo: snapshotUrl,
+        type: attendanceType,
+        simulate: true
+    };
+
+    try {
+        const response = await apiFetch('/api/attendance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+        const result = await response.json();
 
-        const payload = {
-            employee_id: inputEmpId || null,
-            snapshot_photo: snapshotUrl,
-            type: attendanceType,
-            simulate: true
-        };
-
-        try {
-            const response = await apiFetch('/api/attendance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
-
-            if (response.ok) {
-                executeAttendanceSuccess(result.employee, result.similarity, snapshotUrl, result.log);
-            } else {
-                failVerification(result.message);
-            }
-        } catch (err) {
-            console.error("Simulated Attendance API error:", err);
-            failVerification("Gagal memproses absensi simulasi.");
+        if (response.ok) {
+            executeAttendanceSuccess(result.employee, result.similarity, snapshotUrl, result.log);
+        } else {
+            failVerification(result.message);
         }
+    } catch (err) {
+        console.error("Simulated Attendance API error:", err);
+        failVerification("Gagal memproses absensi simulasi.");
     }
+}
 
-    function executeAttendanceSuccess(employee, similarity, snapshotUrl, log) {
-        playSound('success');
+function executeAttendanceSuccess(employee, similarity, snapshotUrl, log) {
+    playSound('success');
 
-        elements.scanHudStatus.textContent = 'VERIFIKASI SUKSES';
-        elements.scanHudStatus.style.backgroundColor = 'rgba(16, 185, 129, 0.3)';
-        elements.scanHudStatus.style.color = 'var(--primary)';
+    elements.scanHudStatus.textContent = 'VERIFIKASI SUKSES';
+    elements.scanHudStatus.style.backgroundColor = 'rgba(16, 185, 129, 0.3)';
+    elements.scanHudStatus.style.color = 'var(--primary)';
 
-        elements.scanMatchResult.textContent = `MATCH: ${employee.name} (${Number(similarity).toFixed(1)}%)`;
-        elements.scanMatchResult.style.display = 'block';
-        elements.scanMatchResult.style.backgroundColor = 'var(--primary)';
-        elements.scanMatchResult.style.color = 'var(--text-inverse)';
+    elements.scanMatchResult.textContent = `MATCH: ${employee.name} (${Number(similarity).toFixed(1)}%)`;
+    elements.scanMatchResult.style.display = 'block';
+    elements.scanMatchResult.style.backgroundColor = 'var(--primary)';
+    elements.scanMatchResult.style.color = 'var(--text-inverse)';
 
-        const isLate = log.is_late === 1;
-        const safeType = log.type === 'check-out' ? 'check-out' : 'check-in';
-        elements.scanResultCard.className = 'scan-result-card success-match';
-        elements.scanResultCard.innerHTML = `
+    const isLate = log.is_late === 1;
+    const safeType = log.type === 'check-out' ? 'check-out' : 'check-in';
+    elements.scanResultCard.className = 'scan-result-card success-match';
+    elements.scanResultCard.innerHTML = `
         <div class="result-avatar">
             <img src="${safeImageUrl(snapshotUrl)}" alt="Live snapshot">
         </div>
@@ -2998,20 +2999,20 @@ async function startScanCamera() {
         </div>
     `;
 
-        loadData();
-        speakPhrase(`Absensi ${safeType === 'check-in' ? 'masuk' : 'keluar'} berhasil. Selamat bekerja, ${String(employee.name).split(' ')[0]}.`);
-    }
+    loadData();
+    speakPhrase(`Absensi ${safeType === 'check-in' ? 'masuk' : 'keluar'} berhasil. Selamat bekerja, ${String(employee.name).split(' ')[0]}.`);
+}
 
-    function failVerification(reason) {
-        stopCamera();
-        playSound('error');
+function failVerification(reason) {
+    stopCamera();
+    playSound('error');
 
-        elements.scanHudStatus.textContent = "VERIFIKASI GAGAL";
-        elements.scanHudStatus.style.backgroundColor = "rgba(239, 68, 68, 0.3)";
-        elements.scanHudStatus.style.color = "var(--danger)";
+    elements.scanHudStatus.textContent = "VERIFIKASI GAGAL";
+    elements.scanHudStatus.style.backgroundColor = "rgba(239, 68, 68, 0.3)";
+    elements.scanHudStatus.style.color = "var(--danger)";
 
-        elements.scanResultCard.className = "scan-result-card error-match";
-        elements.scanResultCard.innerHTML = `
+    elements.scanResultCard.className = "scan-result-card error-match";
+    elements.scanResultCard.innerHTML = `
         <div class="result-avatar">
             <span class="material-icons-round">no_accounts</span>
         </div>
@@ -3024,64 +3025,64 @@ async function startScanCamera() {
             </button>
         </div>
     `;
-        document.getElementById('btn-retry-scan')?.addEventListener('click', startScanCamera);
+    document.getElementById('btn-retry-scan')?.addEventListener('click', startScanCamera);
 
-        speakPhrase('Verifikasi absensi ditolak.');
+    speakPhrase('Verifikasi absensi ditolak.');
+}
+
+// Speech Synthesis
+function speakPhrase(phrase) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(phrase);
+        utterance.lang = 'id-ID';
+        utterance.pitch = 1.0;
+        utterance.rate = 1.05;
+        window.speechSynthesis.speak(utterance);
     }
+}
 
-    // Speech Synthesis
-    function speakPhrase(phrase) {
-        if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(phrase);
-            utterance.lang = 'id-ID';
-            utterance.pitch = 1.0;
-            utterance.rate = 1.05;
-            window.speechSynthesis.speak(utterance);
-        }
-    }
+// Dashboard Aggregates Render
+function renderRecentActivities() {
+    const container = elements.recentActivityList;
+    container.innerHTML = '';
 
-    // Dashboard Aggregates Render
-    function renderRecentActivities() {
-        const container = elements.recentActivityList;
-        container.innerHTML = '';
-
-        if (!state.isAdmin) {
-            container.innerHTML = `
+    if (!state.isAdmin) {
+        container.innerHTML = `
             <div class="empty-state">
                 <span class="material-icons-round">lock</span>
                 <h3>Login admin diperlukan</h3>
                 <p>Aktivitas rinci hanya dapat dilihat setelah sesi administrator aktif.</p>
             </div>
         `;
-            return;
-        }
+        return;
+    }
 
-        const today = new Date().toDateString();
-        const todayLogs = state.logs
-            .filter(log => new Date(log.timestamp).toDateString() === today)
-            .slice(0, 5);
+    const today = new Date().toDateString();
+    const todayLogs = state.logs
+        .filter(log => new Date(log.timestamp).toDateString() === today)
+        .slice(0, 5);
 
-        if (todayLogs.length === 0) {
-            container.innerHTML = `
+    if (todayLogs.length === 0) {
+        container.innerHTML = `
             <div class="empty-state">
                 <span class="material-icons-round">event_available</span>
                 <h3>Belum ada aktivitas</h3>
                 <p>Aktivitas presensi hari ini akan tampil di sini.</p>
             </div>
         `;
-            return;
-        }
+        return;
+    }
 
-        todayLogs.forEach(log => {
-            const item = document.createElement('div');
-            item.className = 'activity-item';
-            const isLate = log.is_late === 1;
-            const type = log.type === 'check-out' ? 'check-out' : 'check-in';
-            const badgeClass = type === 'check-in' ? (isLate ? 'late' : 'check-in') : 'check-out';
-            const badgeLabel = type === 'check-in' ? (isLate ? 'Terlambat' : 'Masuk') : 'Keluar';
+    todayLogs.forEach(log => {
+        const item = document.createElement('div');
+        item.className = 'activity-item';
+        const isLate = log.is_late === 1;
+        const type = log.type === 'check-out' ? 'check-out' : 'check-in';
+        const badgeClass = type === 'check-in' ? (isLate ? 'late' : 'check-in') : 'check-out';
+        const badgeLabel = type === 'check-in' ? (isLate ? 'Terlambat' : 'Masuk') : 'Keluar';
 
-            item.innerHTML = `
+        item.innerHTML = `
             <div class="activity-user">
                 <img src="${safeImageUrl(log.snapshot_photo)}" class="activity-avatar" alt="Foto presensi">
                 <div class="user-meta">
@@ -3094,16 +3095,16 @@ async function startScanCamera() {
                 <span class="badge ${badgeClass}">${badgeLabel}</span>
             </div>
         `;
-            container.appendChild(item);
-        });
-    }
+        container.appendChild(item);
+    });
+}
 
-    // Logs Table Panel
-    function renderLogs(logsToRender = state.logs) {
-        elements.logsTbody.innerHTML = '';
+// Logs Table Panel
+function renderLogs(logsToRender = state.logs) {
+    elements.logsTbody.innerHTML = '';
 
-        if (logsToRender.length === 0) {
-            elements.logsTbody.innerHTML = `
+    if (logsToRender.length === 0) {
+        elements.logsTbody.innerHTML = `
             <tr>
                 <td colspan="7" class="table-empty-cell">
                     <div class="table-empty-state">
@@ -3114,17 +3115,17 @@ async function startScanCamera() {
                 </td>
             </tr>
         `;
-            return;
-        }
+        return;
+    }
 
-        logsToRender.forEach(log => {
-            const tr = document.createElement('tr');
-            const type = log.type === 'check-out' ? 'check-out' : 'check-in';
-            const statusClass = type === 'check-in'
-                ? (log.is_late === 1 ? 'late' : 'check-in')
-                : 'check-out';
+    logsToRender.forEach(log => {
+        const tr = document.createElement('tr');
+        const type = log.type === 'check-out' ? 'check-out' : 'check-in';
+        const statusClass = type === 'check-in'
+            ? (log.is_late === 1 ? 'late' : 'check-in')
+            : 'check-out';
 
-            tr.innerHTML = `
+        tr.innerHTML = `
             <td><img src="${safeImageUrl(log.snapshot_photo)}" class="log-snapshot" alt="Face snapshot"></td>
             <td>
                 <div class="logs-employee-info">
@@ -3148,142 +3149,142 @@ async function startScanCamera() {
             </td>
             <td><span class="badge ${statusClass}">${escapeHtml(log.status)}</span></td>
         `;
-            elements.logsTbody.appendChild(tr);
+        elements.logsTbody.appendChild(tr);
+    });
+}
+
+function filterLogs() {
+    const query = elements.logSearch.value.trim().toLowerCase();
+
+    if (!query) {
+        renderLogs();
+        return;
+    }
+
+    const filtered = state.logs.filter(log =>
+        log.name.toLowerCase().includes(query) ||
+        log.employee_id.toLowerCase().includes(query) ||
+        log.role.toLowerCase().includes(query)
+    );
+
+    renderLogs(filtered);
+}
+
+async function clearLogs() {
+    if (confirm("Apakah Anda yakin ingin menghapus semua riwayat kehadiran dari server? Data biometrik karyawan tetap aman.")) {
+        try {
+            const response = await apiFetch('/api/clear-logs', { method: 'POST' });
+            if (response.ok) {
+                await loadData();
+                renderLogs();
+                renderRecentActivities();
+                playSound('beep');
+            } else {
+                showToast('Gagal menghapus riwayat', 'Server menolak permintaan penghapusan.', 'error');
+            }
+        } catch (e) {
+            console.error("Clear logs error:", e);
+            showToast('Gangguan jaringan', 'Riwayat tidak dapat dihapus.', 'error');
+        }
+    }
+}
+
+function exportLogsToCsv() {
+    if (state.logs.length === 0) {
+        showToast('Tidak ada data', 'Belum ada riwayat presensi untuk diekspor.', 'warning');
+        return;
+    }
+    // Redirect browser to Flask's file download endpoint
+    window.location.href = '/api/export-csv';
+}
+
+// Helpers
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Modals
+function showModal(title, message) {
+    elements.modalTitle.textContent = title;
+    elements.modalMessage.innerHTML = message;
+    elements.successModal.classList.add('active');
+    document.body.classList.add('modal-open');
+    playSound('success');
+}
+
+function closeModal() {
+    elements.successModal.classList.remove('active');
+    document.body.classList.remove('modal-open');
+}
+
+// --- ADMIN PANEL & RECYCLE BIN FUNCTIONS ---
+
+async function loadAdminData() {
+    try {
+        if (!(await ensureAdminSession())) return;
+
+        const [setRes, empRes, recycleRes] = await Promise.all([
+            apiFetch('/api/settings'),
+            apiFetch('/api/employees'),
+            apiFetch('/api/employees/recycle_bin')
+        ]);
+
+        if (!setRes.ok || !empRes.ok || !recycleRes.ok) {
+            throw new Error('Sesi admin berakhir atau data gagal dimuat.');
+        }
+
+        const settings = await setRes.json();
+        state.employees = await empRes.json();
+        const recycled = await recycleRes.json();
+
+        document.getElementById('setting-checkin-start').value = settings.checkin_start || '07:00';
+        document.getElementById('setting-checkin-end').value = settings.checkin_end || '09:00';
+        document.getElementById('setting-checkout-start').value = settings.checkout_start || '17:00';
+        document.getElementById('setting-checkout-end').value = settings.checkout_end || '19:00';
+
+        renderAdminTables(state.employees, recycled);
+    } catch (error) {
+        console.error('Failed to load admin data:', error);
+        showToast('Gagal memuat data admin', error.message || 'Silakan coba kembali.', 'error');
+    }
+}
+
+async function saveSettings() {
+    const payload = {
+        checkin_start: document.getElementById('setting-checkin-start').value,
+        checkin_end: document.getElementById('setting-checkin-end').value,
+        checkout_start: document.getElementById('setting-checkout-start').value,
+        checkout_end: document.getElementById('setting-checkout-end').value
+    };
+
+    try {
+        const response = await apiFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+        const result = await response.json();
+        showToast(response.ok ? 'Jadwal tersimpan' : 'Gagal menyimpan', result.message || (response.ok ? 'Pengaturan berhasil diperbarui.' : 'Pengaturan tidak dapat disimpan.'), response.ok ? 'success' : 'error');
+    } catch (error) {
+        console.error('Save settings error:', error);
+        showToast('Gagal menyimpan jadwal', 'Terjadi gangguan saat menghubungi server.', 'error');
     }
+}
 
-    function filterLogs() {
-        const query = elements.logSearch.value.trim().toLowerCase();
+function renderAdminTables(active, recycled) {
+    const activeTbody = document.getElementById('admin-active-tbody');
+    const recycleTbody = document.getElementById('admin-recycle-tbody');
+    if (!activeTbody || !recycleTbody) return;
 
-        if (!query) {
-            renderLogs();
-            return;
-        }
+    activeTbody.innerHTML = '';
+    recycleTbody.innerHTML = '';
 
-        const filtered = state.logs.filter(log =>
-            log.name.toLowerCase().includes(query) ||
-            log.employee_id.toLowerCase().includes(query) ||
-            log.role.toLowerCase().includes(query)
-        );
-
-        renderLogs(filtered);
-    }
-
-    async function clearLogs() {
-        if (confirm("Apakah Anda yakin ingin menghapus semua riwayat kehadiran dari server? Data biometrik karyawan tetap aman.")) {
-            try {
-                const response = await apiFetch('/api/clear-logs', { method: 'POST' });
-                if (response.ok) {
-                    await loadData();
-                    renderLogs();
-                    renderRecentActivities();
-                    playSound('beep');
-                } else {
-                    showToast('Gagal menghapus riwayat', 'Server menolak permintaan penghapusan.', 'error');
-                }
-            } catch (e) {
-                console.error("Clear logs error:", e);
-                showToast('Gangguan jaringan', 'Riwayat tidak dapat dihapus.', 'error');
-            }
-        }
-    }
-
-    function exportLogsToCsv() {
-        if (state.logs.length === 0) {
-            showToast('Tidak ada data', 'Belum ada riwayat presensi untuk diekspor.', 'warning');
-            return;
-        }
-        // Redirect browser to Flask's file download endpoint
-        window.location.href = '/api/export-csv';
-    }
-
-    // Helpers
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    // Modals
-    function showModal(title, message) {
-        elements.modalTitle.textContent = title;
-        elements.modalMessage.innerHTML = message;
-        elements.successModal.classList.add('active');
-        document.body.classList.add('modal-open');
-        playSound('success');
-    }
-
-    function closeModal() {
-        elements.successModal.classList.remove('active');
-        document.body.classList.remove('modal-open');
-    }
-
-    // --- ADMIN PANEL & RECYCLE BIN FUNCTIONS ---
-
-    async function loadAdminData() {
-        try {
-            if (!(await ensureAdminSession())) return;
-
-            const [setRes, empRes, recycleRes] = await Promise.all([
-                apiFetch('/api/settings'),
-                apiFetch('/api/employees'),
-                apiFetch('/api/employees/recycle_bin')
-            ]);
-
-            if (!setRes.ok || !empRes.ok || !recycleRes.ok) {
-                throw new Error('Sesi admin berakhir atau data gagal dimuat.');
-            }
-
-            const settings = await setRes.json();
-            state.employees = await empRes.json();
-            const recycled = await recycleRes.json();
-
-            document.getElementById('setting-checkin-start').value = settings.checkin_start || '07:00';
-            document.getElementById('setting-checkin-end').value = settings.checkin_end || '09:00';
-            document.getElementById('setting-checkout-start').value = settings.checkout_start || '17:00';
-            document.getElementById('setting-checkout-end').value = settings.checkout_end || '19:00';
-
-            renderAdminTables(state.employees, recycled);
-        } catch (error) {
-            console.error('Failed to load admin data:', error);
-            showToast('Gagal memuat data admin', error.message || 'Silakan coba kembali.', 'error');
-        }
-    }
-
-    async function saveSettings() {
-        const payload = {
-            checkin_start: document.getElementById('setting-checkin-start').value,
-            checkin_end: document.getElementById('setting-checkin-end').value,
-            checkout_start: document.getElementById('setting-checkout-start').value,
-            checkout_end: document.getElementById('setting-checkout-end').value
-        };
-
-        try {
-            const response = await apiFetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
-            showToast(response.ok ? 'Jadwal tersimpan' : 'Gagal menyimpan', result.message || (response.ok ? 'Pengaturan berhasil diperbarui.' : 'Pengaturan tidak dapat disimpan.'), response.ok ? 'success' : 'error');
-        } catch (error) {
-            console.error('Save settings error:', error);
-            showToast('Gagal menyimpan jadwal', 'Terjadi gangguan saat menghubungi server.', 'error');
-        }
-    }
-
-    function renderAdminTables(active, recycled) {
-        const activeTbody = document.getElementById('admin-active-tbody');
-        const recycleTbody = document.getElementById('admin-recycle-tbody');
-        if (!activeTbody || !recycleTbody) return;
-
-        activeTbody.innerHTML = '';
-        recycleTbody.innerHTML = '';
-
-        if (active.length === 0) {
-            activeTbody.innerHTML = '<tr><td colspan="4" class="table-empty-cell">Tidak ada karyawan aktif</td></tr>';
-        } else {
-            active.forEach(emp => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
+    if (active.length === 0) {
+        activeTbody.innerHTML = '<tr><td colspan="4" class="table-empty-cell">Tidak ada karyawan aktif</td></tr>';
+    } else {
+        active.forEach(emp => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
                 <td><code>${escapeHtml(emp.id)}</code></td>
                 <td>${escapeHtml(emp.name)}</td>
                 <td>${escapeHtml(emp.role)}</td>
@@ -3291,16 +3292,16 @@ async function startScanCamera() {
                     <button class="btn btn-danger-ghost admin-action" data-action="soft-delete" data-id="${escapeHtml(emp.id)}">Hapus</button>
                 </td>
             `;
-                activeTbody.appendChild(row);
-            });
-        }
+            activeTbody.appendChild(row);
+        });
+    }
 
-        if (recycled.length === 0) {
-            recycleTbody.innerHTML = '<tr><td colspan="4" class="table-empty-cell">Recycle bin kosong</td></tr>';
-        } else {
-            recycled.forEach(emp => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
+    if (recycled.length === 0) {
+        recycleTbody.innerHTML = '<tr><td colspan="4" class="table-empty-cell">Recycle bin kosong</td></tr>';
+    } else {
+        recycled.forEach(emp => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
                 <td><code>${escapeHtml(emp.id)}</code></td>
                 <td>${escapeHtml(emp.name)}</td>
                 <td>${escapeHtml(emp.role)}</td>
@@ -3309,45 +3310,45 @@ async function startScanCamera() {
                     <button class="btn btn-danger-ghost admin-action" data-action="permanent-delete" data-id="${escapeHtml(emp.id)}">Hapus Permanen</button>
                     </div></td>
             `;
-                recycleTbody.appendChild(row);
-            });
-        }
-    }
-
-    async function runAdminAction(action, id) {
-        const encodedId = encodeURIComponent(id);
-        let url = `/api/employees/${encodedId}`;
-        let method = 'DELETE';
-        let confirmation = `Pindahkan akun ${id} ke Recycle Bin?`;
-
-        if (action === 'restore') {
-            url += '/restore';
-            method = 'POST';
-            confirmation = `Pulihkan akun ${id} dari Recycle Bin?`;
-        } else if (action === 'permanent-delete') {
-            url += '/permanent';
-            confirmation = `PERINGATAN: Hapus permanen akun ${id}? Data tidak dapat dikembalikan.`;
-        }
-
-        if (!confirm(confirmation)) return;
-
-        const response = await apiFetch(url, { method });
-        const result = await response.json();
-        if (!response.ok) {
-            showToast('Aksi admin gagal', result.message || 'Permintaan tidak dapat diproses.', 'error');
-            return;
-        }
-        await loadAdminData();
-        await loadData();
-        renderRecentActivities();
-    }
-
-    document.addEventListener('click', event => {
-        const button = event.target.closest('.admin-action');
-        if (!button) return;
-        runAdminAction(button.dataset.action, button.dataset.id).catch(error => {
-            console.error('Admin action error:', error);
-            showToast('Terjadi kesalahan', 'Aksi administrator tidak dapat diselesaikan.', 'error');
+            recycleTbody.appendChild(row);
         });
-    });
+    }
 }
+
+async function runAdminAction(action, id) {
+    const encodedId = encodeURIComponent(id);
+    let url = `/api/employees/${encodedId}`;
+    let method = 'DELETE';
+    let confirmation = `Pindahkan akun ${id} ke Recycle Bin?`;
+
+    if (action === 'restore') {
+        url += '/restore';
+        method = 'POST';
+        confirmation = `Pulihkan akun ${id} dari Recycle Bin?`;
+    } else if (action === 'permanent-delete') {
+        url += '/permanent';
+        confirmation = `PERINGATAN: Hapus permanen akun ${id}? Data tidak dapat dikembalikan.`;
+    }
+
+    if (!confirm(confirmation)) return;
+
+    const response = await apiFetch(url, { method });
+    const result = await response.json();
+    if (!response.ok) {
+        showToast('Aksi admin gagal', result.message || 'Permintaan tidak dapat diproses.', 'error');
+        return;
+    }
+    await loadAdminData();
+    await loadData();
+    renderRecentActivities();
+}
+
+document.addEventListener('click', event => {
+    const button = event.target.closest('.admin-action');
+    if (!button) return;
+    runAdminAction(button.dataset.action, button.dataset.id).catch(error => {
+        console.error('Admin action error:', error);
+        showToast('Terjadi kesalahan', 'Aksi administrator tidak dapat diselesaikan.', 'error');
+    });
+});
+
